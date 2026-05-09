@@ -266,7 +266,7 @@ __global__ void encodePackedKmersKernel(const char* sequence, uint64_t numKmers,
 
     uint64_t packed = 0;
     for (uint64_t i = 0; i < K; ++i) {
-        const uint8_t encoded = Alphabet::encode(sequence[idx + i]);
+        const uint8_t encoded = Alphabet::encode(sequence + (idx + i) * Alphabet::symbolWidth);
         packed = (packed << symbolBits) | (encoded & symbolMask);
     }
     output[idx] = packed;
@@ -279,7 +279,8 @@ inline void gpuEncodePackedKmers(
     uint64_t* d_output,
     cudaStream_t stream = {}
 ) {
-    const uint64_t numKmers = sequenceLength >= K ? sequenceLength - K + 1 : 0;
+    const uint64_t symbols = sequenceLength / Alphabet::symbolWidth;
+    const uint64_t numKmers = symbols >= K ? symbols - K + 1 : 0;
     if (numKmers == 0) {
         return;
     }

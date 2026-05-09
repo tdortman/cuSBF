@@ -18,15 +18,19 @@
 
 using TestConfig = bloom::Config<5, 4, 3, 4>;
 using ProteinTestConfig = bloom::Config<5, 4, 3, 4, 256, bloom::ProteinAlphabet>;
+using TripletTestConfig = bloom::Config<3, 2, 2, 4, 256, bloom::DnaTripletAlphabet>;
 
 struct CustomAlphabet {
+    static constexpr uint64_t symbolWidth = 1;
     static constexpr uint64_t symbolCount = 3;
     static constexpr uint8_t invalidSymbol = 7;
     static constexpr uint8_t separator = '!';
+    static constexpr char validBytes[] = "xyz";
 
     [[nodiscard]] constexpr __host__ __device__ __forceinline__ static uint8_t encode(
-        uint8_t byte
+        const char* input
     ) {
+        const auto byte = static_cast<uint8_t>(input[0]);
         // clang-format off
         switch (byte) {
             case 'x': return 0;
@@ -42,6 +46,8 @@ using CustomAlphabetTestConfig = bloom::Config<3, 2, 2, 4, 256, CustomAlphabet>;
 
 static_assert(TestConfig::symbolBits == 2);
 static_assert(ProteinTestConfig::symbolBits == 5);
+static_assert(TripletTestConfig::symbolBits == 6);
+static_assert(TripletTestConfig::symbolWidth == 3);
 static_assert(bloom::Config<12, 8, 5, 4, 256, bloom::ProteinAlphabet>::k == 12);
 static_assert(CustomAlphabetTestConfig::symbolBits == 2);
 static_assert(CustomAlphabet::invalidSymbol != 0xFFu);

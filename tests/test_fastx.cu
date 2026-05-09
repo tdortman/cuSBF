@@ -80,6 +80,29 @@ TEST_F(BloomFilterTest, QueryFastxFileDoesNotCreateCrossRecordKmers) {
     EXPECT_EQ(report.positiveKmers, report.queriedKmers);
 }
 
+TEST_F(BloomFilterTest, TripletQueryFastxFileDoesNotCreateCrossRecordKmers) {
+    bloom::Filter<TripletTestConfig> filter(1 << 12);
+
+    const std::string sequenceA = "ACGTACGTT";
+    const std::string sequenceB = "GGGTTTAAA";
+    (void)filter.insertSequence(sequenceA);
+    (void)filter.insertSequence(sequenceB);
+
+    const auto file = writeTempFile(
+        ">first\n"
+        "ACGTACGTT\n"
+        ">second\n"
+        "GGGTTTAAA\n"
+    );
+
+    const auto report = filter.queryFastxFile(file.path);
+
+    EXPECT_EQ(report.recordsQueried, 2);
+    EXPECT_EQ(report.queriedBases, sequenceA.size() + sequenceB.size());
+    EXPECT_EQ(report.queriedKmers, 2u);
+    EXPECT_EQ(report.positiveKmers, report.queriedKmers);
+}
+
 TEST_F(BloomFilterTest, FastxReportsOnlyValidKmers) {
     bloom::Filter<TestConfig> filter(1 << 12);
 

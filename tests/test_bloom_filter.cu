@@ -195,3 +195,53 @@ TEST_F(BloomFilterTest, CustomAlphabetUsesExplicitInvalidSentinel) {
     const std::vector<uint8_t> expected = {1, 0, 0, 0, 1};
     EXPECT_EQ(hits, expected);
 }
+
+TEST_F(BloomFilterTest, DnaTripletAlphabetInsertAndQuerySameSequenceHasNoFalseNegatives) {
+    bloom::Filter<TripletTestConfig> filter(1 << 12);
+
+    const std::string sequence = "ACGTACGTTAAACCCGGGTTT";
+    const uint64_t inserted = filter.insertSequence(sequence);
+    const auto hits = filter.containsSequence(sequence);
+
+    ASSERT_EQ(
+        inserted, sequence.size() / TripletTestConfig::symbolWidth - TripletTestConfig::k + 1
+    );
+    ASSERT_EQ(hits.size(), inserted);
+    EXPECT_TRUE(allOnes(hits));
+}
+
+TEST_F(BloomFilterTest, DnaTripletAlphabetLowercaseMatchesUppercaseQuery) {
+    bloom::Filter<TripletTestConfig> filter(1 << 12);
+
+    const std::string lowerSequence = "acgtacgttaaacccgggttt";
+    const std::string upperSequence = "ACGTACGTTAAACCCGGGTTT";
+
+    (void)filter.insertSequence(lowerSequence);
+
+    EXPECT_TRUE(allOnes(filter.containsSequence(upperSequence)));
+    EXPECT_TRUE(allOnes(filter.containsSequence(lowerSequence)));
+}
+
+TEST_F(BloomFilterTest, DnaTripletAlphabetInvalidTripletsResetForwardWindows) {
+    bloom::Filter<TripletTestConfig> filter(1 << 12);
+
+    const std::string sequence = "ACGTACNNNGGGTTTAAA";
+    const auto inserted = filter.insertSequence(sequence);
+    const auto hits = filter.containsSequence(sequence);
+
+    EXPECT_EQ(inserted, hits.size());
+    const std::vector<uint8_t> expected = {0, 0, 0, 1};
+    EXPECT_EQ(hits, expected);
+}
+
+TEST_F(BloomFilterTest, DnaTripletAlphabetIgnoresTrailingIncompleteTriplet) {
+    bloom::Filter<TripletTestConfig> filter(1 << 12);
+
+    const std::string sequence = "ACGTACGTTAAACCCGGGTTTAA";
+    const auto inserted = filter.insertSequence(sequence);
+    const auto hits = filter.containsSequence(sequence);
+
+    EXPECT_EQ(inserted, 5u);
+    EXPECT_EQ(hits.size(), 5u);
+    EXPECT_TRUE(allOnes(hits));
+}

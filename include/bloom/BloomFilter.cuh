@@ -64,6 +64,7 @@ struct Config {
     static constexpr uint16_t s = S_;
     static constexpr uint64_t hashCount = HashCount_;
     static constexpr uint64_t alphabetSize = Alphabet::symbolCount;
+    static constexpr uint64_t symbolWidth = Alphabet::symbolWidth;
     static constexpr uint64_t symbolBits = cuda::std::bit_width(alphabetSize - 1);
     static constexpr uint64_t symbolMask = (uint64_t{1} << symbolBits) - 1;
     static constexpr uint64_t filterBlockBits = 256;
@@ -78,6 +79,7 @@ struct Config {
     static constexpr uint64_t maxRunKmers = cudaBlockSize;
 
     static_assert(k > 0, "k must be positive");
+    static_assert(symbolWidth > 0, "alphabet symbolWidth must be positive");
     static_assert(m > 0 && m <= k, "m must satisfy 0 < m <= k");
     static_assert(s > 0 && s <= k, "s must satisfy 0 < s <= k");
     static_assert(k * symbolBits <= 64, "k-mer must fit in one packed uint64_t");
@@ -434,7 +436,10 @@ class Filter {
     explicit Filter(uint64_t requestedFilterBits)
         : numShards_(
               cuda::std::bit_ceil(
-                  std::max<uint64_t>(1, cuda::ceil_div(requestedFilterBits, Config::filterBlockBits))
+                  std::max<uint64_t>(
+                      1,
+                      cuda::ceil_div(requestedFilterBits, Config::filterBlockBits)
+                  )
               )
           ),
           filterBits_(numShards_ * Config::filterBlockBits),
@@ -461,11 +466,11 @@ class Filter {
      */
     [[nodiscard]] uint64_t
     insertSequence(std::string_view sequence, cuda::stream_ref stream = cudaStream_t{}) {
-        if (sequence.size() < Config::k) {
+        if (recordSymbolCount(sequence.size()) < Config::k) {
             return 0;
         }
 
-        const uint64_t totalKmers = sequence.size() - Config::k + 1;
+        const uint64_t totalKmers = recordKmerCount(sequence.size());
         stageSequence({sequence.data(), sequence.size()}, stream);
         launchInsertSequence(
             device_span<const char>{thrust::raw_pointer_cast(d_sequence_.data()), sequence.size()},
@@ -489,11 +494,11 @@ class Filter {
         device_span<const char> d_sequence,
         cuda::stream_ref stream = cudaStream_t{}
     ) {
-        if (d_sequence.size() < Config::k) {
+        if (detail::SequenceKmerInput<Config>{d_sequence}.kmerCount() == 0) {
             return 0;
         }
 
-        const uint64_t totalKmers = d_sequence.size() - Config::k + 1;
+        const uint64_t totalKmers = detail::SequenceKmerInput<Config>{d_sequence}.kmerCount();
         launchInsertSequence(d_sequence, stream);
         return totalKmers;
     }
@@ -538,7 +543,7 @@ class Filter {
         device_span<uint8_t> d_output,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
-        if (d_sequence.size() < Config::k) {
+        if (detail::SequenceKmerInput<Config>{d_sequence}.kmerCount() == 0) {
             return;
         }
 
@@ -558,11 +563,11 @@ class Filter {
      */
     [[nodiscard]] std::vector<uint8_t>
     containsSequence(std::string_view sequence, cuda::stream_ref stream = cudaStream_t{}) const {
-        if (sequence.size() < Config::k) {
+        if (recordSymbolCount(sequence.size()) < Config::k) {
             return {};
         }
 
-        std::vector<uint8_t> output(sequence.size() - Config::k + 1);
+        std::vector<uint8_t> output(recordKmerCount(sequence.size()));
 
         stageSequence({sequence.data(), sequence.size()}, stream);
         ensureResultCapacity(output.size());
@@ -672,27 +677,34 @@ class Filter {
         return numShards() * sizeof(Shard);
     }
 
+    [[nodiscard]] static uint64_t recordSymbolCount(uint64_t bases) {
+        return bases / Config::symbolWidth;
+    }
+
     [[nodiscard]] static uint64_t recordKmerCount(uint64_t bases) {
-        return bases < Config::k ? 0 : bases - Config::k + 1;
+        const uint64_t symbols = recordSymbolCount(bases);
+        return symbols < Config::k ? 0 : symbols - Config::k + 1;
     }
 
     [[nodiscard]] static uint64_t validRecordKmerCount(std::string_view sequence) {
-        if (sequence.size() < Config::k) {
+        if (recordSymbolCount(sequence.size()) < Config::k) {
             return 0;
         }
 
         uint64_t invalidSymbols = 0;
         for (uint64_t i = 0; i < Config::k; ++i) {
-            invalidSymbols +=
-                Config::Alphabet::encode(sequence[i]) == Config::Alphabet::invalidSymbol;
+            invalidSymbols += Config::Alphabet::encode(sequence.data() + i * Config::symbolWidth) ==
+                              Config::Alphabet::invalidSymbol;
         }
 
         uint64_t validKmers = invalidSymbols == 0 ? 1 : 0;
         for (uint64_t start = 1; start < recordKmerCount(sequence.size()); ++start) {
             invalidSymbols -=
-                Config::Alphabet::encode(sequence[start - 1]) == Config::Alphabet::invalidSymbol;
-            invalidSymbols += Config::Alphabet::encode(sequence[start + Config::k - 1]) ==
-                              Config::Alphabet::invalidSymbol;
+                Config::Alphabet::encode(sequence.data() + (start - 1) * Config::symbolWidth) ==
+                Config::Alphabet::invalidSymbol;
+            invalidSymbols += Config::Alphabet::encode(
+                                  sequence.data() + (start + Config::k - 1) * Config::symbolWidth
+                              ) == Config::Alphabet::invalidSymbol;
             validKmers += invalidSymbols == 0;
         }
         return validKmers;
@@ -700,9 +712,19 @@ class Filter {
 
     static void appendFastxRecord(std::string& sequence, std::string_view recordSequence) {
         if (!sequence.empty()) {
-            sequence.push_back(static_cast<char>(Config::Alphabet::separator));
+            appendFastxBoundary(sequence);
         }
         sequence.append(recordSequence);
+    }
+
+    static void appendFastxBoundary(std::string& sequence) {
+        const uint64_t remainder = sequence.size() % Config::symbolWidth;
+        if (remainder != 0) {
+            sequence.append(
+                Config::symbolWidth - remainder, static_cast<char>(Config::Alphabet::separator)
+            );
+        }
+        sequence.append(Config::symbolWidth, static_cast<char>(Config::Alphabet::separator));
     }
 
     static void appendFastxRecordWithRange(
@@ -711,9 +733,9 @@ class Filter {
         std::string_view recordSequence
     ) {
         if (!sequence.empty()) {
-            sequence.push_back(static_cast<char>(Config::Alphabet::separator));
+            appendFastxBoundary(sequence);
         }
-        const uint64_t offset = sequence.size();
+        const uint64_t offset = recordSymbolCount(sequence.size());
         sequence.append(recordSequence);
         ranges.push_back(FastxRecordRange{offset, recordSequence.size()});
     }
@@ -817,10 +839,10 @@ class Filter {
      * @param stream     CUDA stream.
      */
     void launchInsertSequence(device_span<const char> d_sequence, cuda::stream_ref stream) {
-        if (d_sequence.size() < Config::k) {
+        const uint64_t numKmers = detail::SequenceKmerInput<Config>{d_sequence}.kmerCount();
+        if (numKmers == 0) {
             return;
         }
-        const uint64_t numKmers = d_sequence.size() - Config::k + 1;
         const uint64_t gridSize = cuda::ceil_div(numKmers, Config::cudaBlockSize);
 
         detail::insertSequenceKmersKernel<Config>
@@ -842,7 +864,7 @@ class Filter {
         device_span<uint8_t> d_output,
         cuda::stream_ref stream
     ) const {
-        const uint64_t numKmers = d_sequence.size() - Config::k + 1;
+        const uint64_t numKmers = detail::SequenceKmerInput<Config>{d_sequence}.kmerCount();
         cuda::fill_bytes(stream, d_output, 0);
         constexpr uint64_t kStride = 4;
         const uint64_t gridSize = cuda::ceil_div(numKmers, Config::cudaBlockSize * kStride);
@@ -870,11 +892,13 @@ struct SequenceKmerInput {
     device_span<const char> sequence;
 
     [[nodiscard]] constexpr __host__ __device__ uint64_t kmerCount() const {
-        return sequence.size() < Config::k ? 0 : (sequence.size() - Config::k + 1);
+        const uint64_t symbols = sequence.size() / Config::symbolWidth;
+        return symbols < Config::k ? 0 : (symbols - Config::k + 1);
     }
 
     [[nodiscard]] constexpr __host__ __device__ uint64_t smerCount() const {
-        return sequence.size() < Config::s ? 0 : (sequence.size() - Config::s + 1);
+        const uint64_t symbols = sequence.size() / Config::symbolWidth;
+        return symbols < Config::s ? 0 : (symbols - Config::s + 1);
     }
 };
 
@@ -1028,7 +1052,8 @@ __device__ __forceinline__ bool prepareSequenceHashTiles(
 
     bool localInvalidBase = false;
     for (uint64_t idx = threadIdx.x; idx < tileBases; idx += Config::cudaBlockSize) {
-        const uint8_t encodedBase = Config::Alphabet::encode(sequence[blockStartKmer + idx]);
+        const uint8_t encodedBase =
+            Config::Alphabet::encode(sequence + (blockStartKmer + idx) * Config::symbolWidth);
         sequenceTile[idx] = encodedBase;
         localInvalidBase |= (encodedBase == Config::Alphabet::invalidSymbol);
     }
