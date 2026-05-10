@@ -29,16 +29,32 @@
 
           lib = pkgs.lib;
           cudaPkgs = pkgs.cudaPackages_13_2;
-          llvm = pkgs.llvmPackages_22;
+          llvmPkgs = pkgs.llvmPackages_22;
 
           rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-            extensions = [ "rust-src" ];
+            extensions = [
+              "rust-src"
+              "rust-analyzer"
+            ];
+          };
+
+          cudaToolkit = pkgs.symlinkJoin {
+            name = "cuda-toolkit";
+            paths = with cudaPkgs; [
+              cuda_nvcc
+              cuda_crt
+              cuda_cudart
+              cuda_cccl
+              cuda_gdb.bin
+              nsight_systems
+              nsight_compute
+            ];
           };
 
           cuda = {
             arch = "1200";
             smTarget = "sm_120";
-            path = cudaPkgs.cudatoolkit;
+            path = cudaToolkit;
             version = {
               complete = cudaPkgs.cudaMajorMinorVersion;
               major = cudaPkgs.cudaMajorVersion;
@@ -47,8 +63,7 @@
           };
 
           buildInputs = [
-            cudaPkgs.cudatoolkit
-            cudaPkgs.cuda_cudart
+            cudaToolkit
             pkgs.stdenv.cc.cc.lib
             pkgs.xz
             pkgs.bzip2
@@ -57,20 +72,15 @@
           nativeBuildInputs =
             with pkgs;
             [
-              llvm.clang-tools
-              llvm.lldb
+              llvmPkgs.clang-tools
+              llvmPkgs.clang
               meson
               uv
               pkg-config
               doxygen
               graphviz
 
-              cudaPkgs.nsight_systems
-              cudaPkgs.nsight_compute
-
-              rust-analyzer
               ninja
-              llvm.clang
               cmake
             ]
             ++ [
