@@ -45,9 +45,15 @@
               cuda_crt
               cuda_cudart
               cuda_cccl
+
               cuda_gdb.bin
               nsight_systems
               nsight_compute
+
+              # I do not know why cuRAND headers are necessary
+              # for clangd to not freak out about STL headers when cuda_crt is
+              # also present but at least it's a somewhat cheap dependency...
+              libcurand.include
             ];
           };
 
@@ -92,6 +98,7 @@
             inherit buildInputs nativeBuildInputs;
 
             CPATH = lib.makeIncludePath [ cuda.path ];
+            CUDA_HOME = cuda.path;
 
             LD_LIBRARY_PATH = "${
               lib.makeLibraryPath (buildInputs ++ nativeBuildInputs)
