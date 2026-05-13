@@ -63,23 +63,6 @@ foreach name, config : benchmarks
     )
 endforeach
 
-kmc_api_dep = subproject('kmc').get_variable('kmc_api_dep')
-
-executable(
-    'kmc_to_binary',
-    'kmc_to_binary.cpp',
-    dependencies: [bloom_dep, kmc_api_dep, cli11_dep],
-    install: true,
-)
-
-executable(
-    'superbloom-gpu-benchmark',
-    'superbloom_gpu_benchmark.cu',
-    dependencies: [bloom_dep, cli11_dep, benchmark_dep],
-    cuda_args: cuda_args,
-    install: false,
-)
-
 executable(
     'gpu-filter-profiler',
     'profiler_benchmark.cu',
