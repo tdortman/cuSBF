@@ -65,6 +65,9 @@ Benchmarks and tests are built automatically when this is a standalone project, 
 | `-Dbenchmarks=enabled`        | Always build benchmarks                                   |
 | `-Dbenchmarks=disabled`       | Never build benchmarks                                    |
 | `-Dtests=auto` (default)      | Build tests when standalone, skip when subproject         |
+| `-Dexamples=auto` (default)   | Build examples when standalone, skip when subproject      |
+| `-Dexamples=enabled`          | Always build examples                                     |
+| `-Dexamples=disabled`         | Never build examples                                      |
 | `-Dtests=enabled`             | Always build tests                                        |
 | `-Dtests=disabled`            | Never build tests                                         |
 | `-Dparam_sweep=enabled`       | Build parameter-sweep benchmark (s, m) for DNA or protein |

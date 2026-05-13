@@ -27,9 +27,10 @@ bloom_dep = declare_dependency(
     dependencies: [zlib_dep],
 )
 
-cli11_dep = subproject('cli11').get_variable('CLI11_dep')
-
-subdir('examples')
+build_examples = (
+    get_option('examples').enabled()
+    or (get_option('examples').auto() and not meson.is_subproject())
+)
 
 build_benchmarks = (
     get_option('benchmarks').enabled()
@@ -39,6 +40,14 @@ build_tests = (
     get_option('tests').enabled()
     or (get_option('tests').auto() and not meson.is_subproject())
 )
+
+if build_benchmarks or build_examples
+    cli11_dep = subproject('cli11').get_variable('CLI11_dep')
+endif
+
+if build_examples
+    subdir('examples')
+endif
 
 if build_benchmarks
     subdir('benchmarks')

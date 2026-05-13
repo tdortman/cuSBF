@@ -5,22 +5,6 @@ project('superbloom-cpu', 'c',
 
 cargo = find_program('cargo')
 
-superbloom_cpu_benchmark = custom_target(
-    'superbloom-cpu-benchmark',
-    command: [
-        cargo, 'build',
-        '--release',
-        '--bin', 'benchmark',
-        '--manifest-path', meson.current_source_dir() / 'Cargo.toml',
-        '--target-dir', '@OUTDIR@',
-    ],
-    output: 'release',
-    console: true,
-    build_by_default: true,
-    build_always_stale: true,
-    env: {'RUSTFLAGS': '-C target-cpu=native'},
-)
-
 _cargo_lib_target_dir = meson.current_build_dir() / 'superbloom-cargo-dir'
 
 superbloom_cpu_lib = custom_target(
