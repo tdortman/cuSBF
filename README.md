@@ -59,19 +59,20 @@ ninja -C build
 
 Benchmarks and tests are built automatically when this is a standalone project, but skipped when used as a subproject. Control with Meson feature options:
 
-| Option                        | Behaviour                                                 |
-| ----------------------------- | --------------------------------------------------------- |
-| `-Dbenchmarks=auto` (default) | Build benchmarks when standalone, skip when subproject    |
-| `-Dbenchmarks=enabled`        | Always build benchmarks                                   |
-| `-Dbenchmarks=disabled`       | Never build benchmarks                                    |
-| `-Dtests=auto` (default)      | Build tests when standalone, skip when subproject         |
-| `-Dexamples=auto` (default)   | Build examples when standalone, skip when subproject      |
-| `-Dexamples=enabled`          | Always build examples                                     |
-| `-Dexamples=disabled`         | Never build examples                                      |
-| `-Dtests=enabled`             | Always build tests                                        |
-| `-Dtests=disabled`            | Never build tests                                         |
-| `-Dparam_sweep=enabled`       | Build parameter-sweep benchmark (s, m) for DNA or protein |
-| `-Dparam_sweep_alphabet=dna`  | Alphabet for param_sweep: `dna` or `protein`              |
+| Option                             | Behaviour                                                       |
+| ---------------------------------- | --------------------------------------------------------------- |
+| `-Dbenchmarks=auto` (default)      | Build benchmarks when standalone, skip when subproject          |
+| `-Dbenchmarks=enabled`             | Always build benchmarks                                         |
+| `-Dbenchmarks=disabled`            | Never build benchmarks                                          |
+| `-Dtests=auto` (default)           | Build tests when standalone, skip when subproject               |
+| `-Dtests=enabled`                  | Always build tests                                              |
+| `-Dtests=disabled`                 | Never build tests                                               |
+| `-Dexamples=auto` (default)        | Build examples when standalone, skip when subproject            |
+| `-Dexamples=enabled`               | Always build examples                                           |
+| `-Dexamples=disabled`              | Never build examples                                            |
+| `-Dparam_sweep=disabled` (default) | Never build parameter-sweep benchmark (s, m) for DNA or protein |
+| `-Dparam_sweep=enabled`            | Build parameter-sweep benchmark (s, m) for DNA or protein       |
+| `-Dparam_sweep_alphabet=dna`       | Alphabet for param_sweep: `dna` or `protein`                    |
 
 > [!IMPORTANT]
 > The parameter sweep is disabled by default for a reason, there are 208 binaries for the entire sweep when using the DNA alphabet.
