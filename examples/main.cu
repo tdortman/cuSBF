@@ -80,7 +80,8 @@ int runDemo(
     std::string_view queryFastxPath,
     bool useInsertFastx,
     bool useRawSequence,
-    bool useGeneratedFastx
+    bool useGeneratedFastx,
+    double fillFraction
 ) {
     cusbf::Filter<Config> filter(filterBits);
 
@@ -93,7 +94,7 @@ int runDemo(
     uint64_t queriedRecords = 0;
 
     if (useInsertFastx) {
-        const auto report = filter.insertFastxFile(insertFastxPath);
+        const auto report = filter.insertFastxFile(insertFastxPath, fillFraction);
         inserted = report.insertedKmers;
         insertedBases = report.indexedBases;
         insertedRecords = report.recordsIndexed;
@@ -103,14 +104,14 @@ int runDemo(
         insertedRecords = 1;
     } else {
         std::istringstream inputFastx(makeFastaRecord("generated-insert", sequence, 73));
-        const auto report = filter.insertFastx(inputFastx);
+        const auto report = filter.insertFastx(inputFastx, fillFraction);
         inserted = report.insertedKmers;
         insertedBases = report.indexedBases;
         insertedRecords = report.recordsIndexed;
     }
 
     if (!queryFastxPath.empty()) {
-        const auto report = filter.queryFastxFile(queryFastxPath);
+        const auto report = filter.queryFastxFile(queryFastxPath, fillFraction);
         queryKmers = report.queriedKmers;
         positives = report.positiveKmers;
         queriedBases = report.queriedBases;
@@ -122,14 +123,14 @@ int runDemo(
         queriedBases = query.size();
         queriedRecords = 1;
     } else if (useInsertFastx) {
-        const auto report = filter.queryFastxFile(insertFastxPath);
+        const auto report = filter.queryFastxFile(insertFastxPath, fillFraction);
         queryKmers = report.queriedKmers;
         positives = report.positiveKmers;
         queriedBases = report.queriedBases;
         queriedRecords = report.recordsQueried;
     } else if (useGeneratedFastx) {
         std::istringstream queryFastx(makeFastqRecord("generated-query", sequence, 59));
-        const auto report = filter.queryFastx(queryFastx);
+        const auto report = filter.queryFastx(queryFastx, fillFraction);
         queryKmers = report.queriedKmers;
         positives = report.positiveKmers;
         queriedBases = report.queriedBases;
@@ -170,6 +171,7 @@ int main(int argc, char** argv) {
     uint64_t filterBits = 1ULL << 24;
     uint64_t sequenceLength = 1ULL << 16;
     uint32_t seed = 42;
+    double fillFraction = 0.7;
 
     auto* sequenceOption = app.add_option(
         "sequence",
@@ -189,10 +191,14 @@ int main(int argc, char** argv) {
     app.add_option("--mode", mode, "Input alphabet mode: dna or protein")
         ->check(CLI::IsMember({"dna", "protein"}))
         ->default_val(mode);
-    app.add_option(
-           "--filter-bits", filterBits, "Total cuSBF bits before power-of-two rounding"
-    )
+    app.add_option("--filter-bits", filterBits, "Total cuSBF bits before power-of-two rounding")
         ->default_val(filterBits);
+    app.add_option(
+           "--fill-fraction",
+           fillFraction,
+           "Fraction of free GPU memory to fill per FASTX chunk (default 0.7)"
+    )
+        ->default_val(fillFraction);
 
     insertFastxOption->excludes(sequenceOption);
     queryFastxOption->excludes(queryOption);
@@ -218,7 +224,8 @@ int main(int argc, char** argv) {
                 queryFastxPath,
                 useInsertFastx,
                 useRawSequence,
-                useGeneratedFastx
+                useGeneratedFastx,
+                fillFraction
             );
         }
         return runDemo<Config>(
@@ -229,7 +236,8 @@ int main(int argc, char** argv) {
             queryFastxPath,
             useInsertFastx,
             useRawSequence,
-            useGeneratedFastx
+            useGeneratedFastx,
+            fillFraction
         );
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";

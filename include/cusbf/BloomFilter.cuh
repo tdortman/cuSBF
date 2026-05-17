@@ -11,6 +11,7 @@
 #include <cub/warp/warp_reduce.cuh>
 
 #include <thrust/copy.h>
+#include <thrust/detail/execution_policy.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
@@ -506,26 +507,35 @@ class Filter {
     /**
      * @brief Inserts all k-mers from a FASTA/FASTQ input stream.
      *
-     * @param input   Input stream containing FASTA or FASTQ records.
-     * @param stream  CUDA stream to use.
+     * Reads records in streaming fashion, accumulating them until the
+     * concatenated sequence approaches @p fillFraction of free GPU memory,
+     * then inserts each chunk independently.
+     *
+     * @param input        Input stream containing FASTA or FASTQ records.
+     * @param fillFraction Fraction of free GPU memory to fill per chunk (default 0.7).
+     * @param stream       CUDA stream to use.
      * @return Report summarising records indexed, bases processed, and k-mers inserted.
      */
-    [[nodiscard]] FastxInsertReport
-    insertFastx(std::istream& input, cuda::stream_ref stream = cudaStream_t{}) {
-        return insertFastxStream(input, "<stream>", stream);
+    [[nodiscard]] FastxInsertReport insertFastx(
+        std::istream& input,
+        double fillFraction = 0.7,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) {
+        return insertFastxStream(input, "<stream>", fillFraction, stream);
     }
 
     /**
-     * @brief Inserts all k-mers from a FASTA/FASTQ file.
+     * @brief Inserts all k-mers from a FASTA/FASTQ file via chunked streaming.
      *
-     * @param path    Path to the FASTA/FASTQ file.
-     * @param stream  CUDA stream to use.
-     * @return Report summarising records indexed, bases processed, and k-mers inserted.
+     * @see insertFastx
      */
-    [[nodiscard]] FastxInsertReport
-    insertFastxFile(std::string_view path, cuda::stream_ref stream = cudaStream_t{}) {
+    [[nodiscard]] FastxInsertReport insertFastxFile(
+        std::string_view path,
+        double fillFraction = 0.7,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) {
         auto input = detail::openFastxFile(path);
-        return insertFastxStream(*input, path, stream);
+        return insertFastxStream(*input, path, fillFraction, stream);
     }
 
     /**
@@ -589,28 +599,30 @@ class Filter {
     }
 
     /**
-     * @brief Queries all k-mers from a FASTA/FASTQ input stream.
+     * @brief Queries all k-mers from a FASTA/FASTQ input stream via chunked streaming.
      *
-     * @param input   Input stream containing FASTA or FASTQ records.
-     * @param stream  CUDA stream to use.
-     * @return Report summarising records queried, bases, and hit counts.
+     * @see insertFastx
      */
-    [[nodiscard]] FastxQueryReport
-    queryFastx(std::istream& input, cuda::stream_ref stream = cudaStream_t{}) const {
-        return queryFastxStream(input, "<stream>", stream);
+    [[nodiscard]] FastxQueryReport queryFastx(
+        std::istream& input,
+        double fillFraction = 0.7,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        return queryFastxStream(input, "<stream>", fillFraction, stream);
     }
 
     /**
-     * @brief Queries all k-mers from a FASTA/FASTQ file.
+     * @brief Queries all k-mers from a FASTA/FASTQ file via chunked streaming.
      *
-     * @param path    Path to the FASTA/FASTQ file.
-     * @param stream  CUDA stream to use.
-     * @return Report summarising records queried, bases, and hit counts.
+     * @see queryFastx
      */
-    [[nodiscard]] FastxQueryReport
-    queryFastxFile(std::string_view path, cuda::stream_ref stream = cudaStream_t{}) const {
+    [[nodiscard]] FastxQueryReport queryFastxFile(
+        std::string_view path,
+        double fillFraction = 0.7,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
         auto input = detail::openFastxFile(path);
-        return queryFastxStream(*input, path, stream);
+        return queryFastxStream(*input, path, fillFraction, stream);
     }
 
     /**
@@ -619,13 +631,13 @@ class Filter {
      * @param stream CUDA stream to use.
      */
     void clear(cuda::stream_ref stream = cudaStream_t{}) {
-        cuda::fill_bytes(
-            stream,
-            cuda::std::span<uint8_t>{
-                reinterpret_cast<uint8_t*>(thrust::raw_pointer_cast(d_shards_.data())), sizeBytes()
-            },
-            0
-        );
+        CUSBF_CUDA_CALL(cudaMemsetAsync(
+            thrust::raw_pointer_cast(d_shards_.data()),
+            0,
+            d_shards_.size() * sizeof(Shard),
+            stream.get()
+        ));
+
         stream.sync();
     }
 
@@ -741,18 +753,34 @@ class Filter {
     }
 
     /// @brief Internal implementation shared by insertFastx() and insertFastxFile().
-    [[nodiscard]] FastxInsertReport
-    insertFastxStream(std::istream& input, std::string_view sourceName, cuda::stream_ref stream) {
+    [[nodiscard]] FastxInsertReport insertFastxStream(
+        std::istream& input,
+        std::string_view sourceName,
+        double fillFraction,
+        cuda::stream_ref stream
+    ) {
         detail::FastxReader reader(input, sourceName);
         detail::FastxRecord record;
         FastxInsertReport report;
-        std::string sequence;
 
+        size_t freeBytes = 0;
+        size_t totalBytes = 0;
+        CUSBF_CUDA_CALL(cudaMemGetInfo(&freeBytes, &totalBytes));
+        const auto chunkTargetBytes =
+            static_cast<size_t>(static_cast<double>(freeBytes) * fillFraction);
+
+        std::string sequence;
+        sequence.reserve(chunkTargetBytes);
         while (reader.nextRecord(record)) {
             ++report.recordsIndexed;
             report.indexedBases += record.sequence.size();
             report.insertedKmers += validRecordKmerCount(record.sequence);
             appendFastxRecord(sequence, record.sequence);
+
+            if (sequence.size() >= chunkTargetBytes) {
+                (void)insertSequence(sequence, stream);
+                sequence.clear();
+            }
         }
 
         if (!sequence.empty()) {
@@ -765,12 +793,21 @@ class Filter {
     [[nodiscard]] FastxQueryReport queryFastxStream(
         std::istream& input,
         std::string_view sourceName,
+        double fillFraction,
         cuda::stream_ref stream
     ) const {
         detail::FastxReader reader(input, sourceName);
         detail::FastxRecord record;
         FastxQueryReport report;
+
+        size_t freeBytes = 0;
+        size_t totalBytes = 0;
+        CUSBF_CUDA_CALL(cudaMemGetInfo(&freeBytes, &totalBytes));
+        const auto chunkTargetBytes =
+            static_cast<size_t>(static_cast<double>(freeBytes) * fillFraction);
+
         std::string sequence;
+        sequence.reserve(chunkTargetBytes);
         std::vector<FastxRecordRange> ranges;
 
         while (reader.nextRecord(record)) {
@@ -778,18 +815,34 @@ class Filter {
             report.queriedBases += record.sequence.size();
             report.queriedKmers += validRecordKmerCount(record.sequence);
             appendFastxRecordWithRange(sequence, ranges, record.sequence);
+
+            if (sequence.size() >= chunkTargetBytes) {
+                const auto hits = containsSequence(sequence, stream);
+                for (const FastxRecordRange range : ranges) {
+                    const uint64_t kmers = recordKmerCount(range.size);
+                    if (kmers == 0) {
+                        continue;
+                    }
+                    report.positiveKmers += std::count(
+                        hits.begin() + static_cast<ptrdiff_t>(range.offset),
+                        hits.begin() + static_cast<ptrdiff_t>(range.offset + kmers),
+                        uint8_t{1}
+                    );
+                }
+                sequence.clear();
+                ranges.clear();
+            }
         }
 
         if (!sequence.empty()) {
             const auto hits = containsSequence(sequence, stream);
             for (const FastxRecordRange range : ranges) {
                 const uint64_t kmers = recordKmerCount(range.size);
-                if (kmers == 0) {
+                if (kmers == 0)
                     continue;
-                }
                 report.positiveKmers += std::count(
-                    hits.begin() + static_cast<std::ptrdiff_t>(range.offset),
-                    hits.begin() + static_cast<std::ptrdiff_t>(range.offset + kmers),
+                    hits.begin() + static_cast<ptrdiff_t>(range.offset),
+                    hits.begin() + static_cast<ptrdiff_t>(range.offset + kmers),
                     uint8_t{1}
                 );
             }
@@ -865,7 +918,6 @@ class Filter {
         cuda::stream_ref stream
     ) const {
         const uint64_t numKmers = detail::SequenceKmerInput<Config>{d_sequence}.kmerCount();
-        cuda::fill_bytes(stream, d_output, 0);
         constexpr uint64_t kStride = 4;
         const uint64_t gridSize = cuda::ceil_div(numKmers, Config::cudaBlockSize * kStride);
 
