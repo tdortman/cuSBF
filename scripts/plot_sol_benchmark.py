@@ -39,6 +39,11 @@ def main(
         "-o",
         help="Output directory for plots (default: build/)",
     ),
+    cusbf_only: bool = typer.Option(
+        False,
+        "--cusbf-only",
+        help="Only generate a single cuSBF unified plot with all SOL metrics.",
+    ),
 ):
     """
     Generate Speed of Light (SOL) throughput plots from benchmark CSV results.
@@ -67,6 +72,93 @@ def main(
             "linestyle": ":",
         },
     }
+
+    if cusbf_only:
+        subset = df[df["filter"] == "superbloom"]
+        if subset.empty:
+            typer.secho(
+                "No cuSBF/superbloom rows found in the CSV.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        operations = [
+            op for op in ["insert", "query"] if op in set(subset["operation"])
+        ]
+        if not operations:
+            typer.secho(
+                "No insert/query rows found for cuSBF/superbloom.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        fig, axes = plt.subplots(
+            len(operations),
+            1,
+            figsize=(6.4, 3.7 * len(operations)),
+            sharex=False,
+            sharey=False,
+        )
+        if len(operations) == 1:
+            axes = [axes]
+
+        cusbf_metric_order = [
+            ("memory_throughput", "Memory"),
+            ("l1_throughput", "L1 Cache"),
+            ("l2_throughput", "L2 Cache"),
+            ("dram_throughput", "DRAM"),
+            ("sm_throughput", "Compute"),
+        ]
+
+        for ax, operation in zip(axes, operations):
+            op_subset = subset[subset["operation"] == operation].sort_values("capacity")
+            for metric_col, metric_name in cusbf_metric_order:
+                if metric_col not in op_subset.columns:
+                    continue
+                style = metric_styles.get(metric_col, {}).copy()
+                zorder = 5 if metric_col == "sm_throughput" else 2
+                linewidth = (
+                    pu.LINE_WIDTH + 0.7
+                    if metric_col == "sm_throughput"
+                    else pu.LINE_WIDTH
+                )
+                ax.plot(
+                    op_subset["capacity"].values,
+                    op_subset[metric_col].values,
+                    label=metric_name,
+                    linewidth=linewidth,
+                    markersize=pu.MARKER_SIZE,
+                    zorder=zorder,
+                    **style,
+                )
+
+            ax.set_title(operation.capitalize(), fontweight="bold", pad=3)
+            ax.set_xlabel("Filter Size [k-mers]", fontweight="bold")
+            ax.set_ylabel("Throughput (% of Peak)", fontweight="bold")
+            ax.set_xscale("log", base=2)
+            ax.set_ylim(0, 105)
+            ax.grid(True, which="both", ls="--", alpha=pu.GRID_ALPHA)
+
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.0),
+            ncol=len(cusbf_metric_order),
+            framealpha=pu.LEGEND_FRAME_ALPHA,
+        )
+        plt.tight_layout(rect=(0, 0, 1, 0.94))
+
+        output_file = output_dir / "sol-cusbf-unified.pdf"
+        plt.savefig(
+            output_file, bbox_inches="tight", transparent=True, format="pdf", dpi=600
+        )
+        typer.secho(f"Saved {output_file}", fg=typer.colors.GREEN)
+        plt.close()
+        return
 
     # 1. Per-Filter/Operation Breakdown (All metrics on one plot)
     for filter_type in df["filter"].unique():
