@@ -140,7 +140,7 @@ The `Config` template accepts the following parameters:
 | `K`             | k-mer length (max depends on alphabet)            | -             |
 | `S`             | s-mer width for findere Bloom hash seed (1-K)     | -             |
 | `M`             | Minimiser width for shard selection (1-K)         | -             |
-| `HashCount`     | Number of independent Bloom hash functions (1-16) | -             |
+| `HashCount`     | Number of independent Bloom hash functions (1-16) | 4             |
 | `CudaBlockSize` | CUDA threads per block                            | 256           |
 | `Alphabet`      | Symbol encoding (DNA or protein)                  | `DnaAlphabet` |
 

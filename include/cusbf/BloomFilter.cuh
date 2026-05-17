@@ -46,7 +46,7 @@ namespace cusbf {
  * @tparam K_             k-mer length (1-32).
  * @tparam S_             s-mer width used as the Bloom hash seed (1-k).
  * @tparam M_             minimizer width used for shard selection (1-k).
- * @tparam HashCount_     number of independent Bloom hash functions (1-16).
+ * @tparam HashCount_     number of independent Bloom hash functions (1-16, default 4).
  * @tparam CudaBlockSize_ CUDA threads per block (multiple of 32, default 256).
  * @tparam Alphabet_      byte-to-symbol alphabet encoding.
  */
@@ -54,7 +54,7 @@ template <
     uint16_t K_,
     uint16_t S_,
     uint16_t M_,
-    uint64_t HashCount_,
+    uint64_t HashCount_ = 4,
     uint64_t CudaBlockSize_ = 256,
     Alphabet Alphabet_ = DnaAlphabet>
 struct Config {
