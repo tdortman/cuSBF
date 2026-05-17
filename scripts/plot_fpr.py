@@ -20,11 +20,11 @@ import typer
 app = typer.Typer(help="Plot FPR benchmark results")
 
 
-SUPERBLOOM_FIXTURE_PATTERN = re.compile(
-    r"^SuperBloomFixture(?P<s>\d+)?$", re.IGNORECASE
+CUSBF_FIXTURE_PATTERN = re.compile(
+    r"^CuSbfFixture(?P<s>\d+)?$", re.IGNORECASE
 )
-SUPERBLOOM_CONFIG_FIXTURE_PATTERN = re.compile(
-    r"^SuperBloom_K(?P<k>\d+)_S(?P<s>\d+)_M(?P<m>\d+)_H(?P<h>\d+)_Fixture$",
+CUSBF_CONFIG_FIXTURE_PATTERN = re.compile(
+    r"^CuSBF_K(?P<k>\d+)_S(?P<s>\d+)_M(?P<m>\d+)_H(?P<h>\d+)_Fixture$",
     re.IGNORECASE,
 )
 SUPERBLOOM_CPU_CONFIG_FIXTURE_PATTERN = re.compile(
@@ -33,13 +33,13 @@ SUPERBLOOM_CPU_CONFIG_FIXTURE_PATTERN = re.compile(
 )
 CUCO_FIXTURE_PATTERN = re.compile(r"^CucoBloomFixture$", re.IGNORECASE)
 
-SUPERBLOOM_VARIANT_MARKERS = ["o", "s", "^", "D", "P", "X", "v", "<", ">"]
-SUPERBLOOM_VARIANT_LINESTYLES = ["-", "--", "-.", ":"]
+CUSBF_VARIANT_MARKERS = ["o", "s", "^", "D", "P", "X", "v", "<", ">"]
+CUSBF_VARIANT_LINESTYLES = ["-", "--", "-.", ":"]
 
 
-def parse_superbloom_variant(fixture_name: str, row: pd.Series) -> Optional[int]:
-    """Parse SuperBloom variant ``s`` value from fixture name or CSV counters."""
-    match = SUPERBLOOM_FIXTURE_PATTERN.match(fixture_name)
+def parse_cusbf_variant(fixture_name: str, row: pd.Series) -> Optional[int]:
+    """Parse cuSBF variant ``s`` value from fixture name or CSV counters."""
+    match = CUSBF_FIXTURE_PATTERN.match(fixture_name)
     if match is not None:
         fixture_suffix = match.group("s")
         if fixture_suffix is not None:
@@ -54,7 +54,7 @@ def parse_superbloom_variant(fixture_name: str, row: pd.Series) -> Optional[int]
 
         return None
 
-    config_match = SUPERBLOOM_CONFIG_FIXTURE_PATTERN.match(fixture_name)
+    config_match = CUSBF_CONFIG_FIXTURE_PATTERN.match(fixture_name)
     if config_match is not None:
         return int(config_match.group("s"))
 
@@ -73,11 +73,11 @@ def extract_filter_series(name: str, row: pd.Series) -> Optional[tuple[str, str,
     if len(parts) >= 2:
         fixture_name = parts[0]
         operation = parts[1]
-        superbloom_variant = parse_superbloom_variant(fixture_name, row)
+        cusbf_variant = parse_cusbf_variant(fixture_name, row)
         is_cpu = SUPERBLOOM_CPU_CONFIG_FIXTURE_PATTERN.match(fixture_name) is not None
         is_gpu = (
-            SUPERBLOOM_CONFIG_FIXTURE_PATTERN.match(fixture_name) is not None
-            or SUPERBLOOM_FIXTURE_PATTERN.match(fixture_name) is not None
+            CUSBF_CONFIG_FIXTURE_PATTERN.match(fixture_name) is not None
+            or CUSBF_FIXTURE_PATTERN.match(fixture_name) is not None
         )
         is_cuco = CUCO_FIXTURE_PATTERN.match(fixture_name) is not None
 
@@ -85,15 +85,15 @@ def extract_filter_series(name: str, row: pd.Series) -> Optional[tuple[str, str,
             if operation.upper() != "FPR":
                 return None
 
-            if is_cpu and superbloom_variant is not None:
-                series_key = f"superbloom_cpu_s{superbloom_variant}"
-                display_name = f"{pu.get_filter_display_name('superbloom_cpu')} (s={superbloom_variant})"
+            if is_cpu and cusbf_variant is not None:
+                series_key = f"superbloom_cpu_s{cusbf_variant}"
+                display_name = f"{pu.get_filter_display_name('superbloom_cpu')} (s={cusbf_variant})"
                 return series_key, "superbloom_cpu", display_name
 
-            if is_gpu and superbloom_variant is not None:
-                series_key = f"superbloom_s{superbloom_variant}"
-                display_name = f"{pu.get_filter_display_name('superbloom')} (s={superbloom_variant})"
-                return series_key, "superbloom", display_name
+            if is_gpu and cusbf_variant is not None:
+                series_key = f"cusbf_s{cusbf_variant}"
+                display_name = f"{pu.get_filter_display_name('cusbf')} (s={cusbf_variant})"
+                return series_key, "cusbf", display_name
 
             if is_cuco:
                 return (
@@ -106,7 +106,7 @@ def extract_filter_series(name: str, row: pd.Series) -> Optional[tuple[str, str,
 
 
 def get_plot_style(filter_type: str, base_filter: str) -> dict[str, str]:
-    """Get style for a filter series, including SuperBloom variant styling."""
+    """Get style for a filter series, including cuSBF variant styling."""
     style = dict(
         pu.FILTER_STYLES.get(
             filter_type,
@@ -114,15 +114,15 @@ def get_plot_style(filter_type: str, base_filter: str) -> dict[str, str]:
         )
     )
 
-    if base_filter in ("superbloom", "superbloom_cpu") and re.search(r"_s(\d+)$", filter_type):
+    if base_filter in ("cusbf", "superbloom_cpu") and re.search(r"_s(\d+)$", filter_type):
         variant_match = re.search(r"_s(\d+)$", filter_type)
         if variant_match is not None:
             variant_index = int(variant_match.group(1))
-            style["marker"] = SUPERBLOOM_VARIANT_MARKERS[
-                variant_index % len(SUPERBLOOM_VARIANT_MARKERS)
+            style["marker"] = CUSBF_VARIANT_MARKERS[
+                variant_index % len(CUSBF_VARIANT_MARKERS)
             ]
-            style["linestyle"] = SUPERBLOOM_VARIANT_LINESTYLES[
-                variant_index % len(SUPERBLOOM_VARIANT_LINESTYLES)
+            style["linestyle"] = CUSBF_VARIANT_LINESTYLES[
+                variant_index % len(CUSBF_VARIANT_LINESTYLES)
             ]
 
     return style

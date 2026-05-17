@@ -1,5 +1,5 @@
 # Project info
-PROJECT_NAME           = "Bloom Filter"
+PROJECT_NAME           = "cuSBF"
 OUTPUT_DIRECTORY       = doxygen
 GENERATE_HTML          = YES
 GENERATE_LATEX         = NO

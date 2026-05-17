@@ -13,11 +13,11 @@
 #include <string>
 #include <vector>
 
-#include <bloom/BloomFilter.cuh>
-#include <bloom/device_span.cuh>
-#include <bloom/helpers.cuh>
 #include <cuckoogpu/CuckooFilter.cuh>
 #include <cuco/bloom_filter.cuh>
+#include <cusbf/BloomFilter.cuh>
+#include <cusbf/device_span.cuh>
+#include <cusbf/helpers.cuh>
 
 #include "benchmark_common.cuh"
 
@@ -29,30 +29,30 @@ using CuckooGpuFilter = cuckoogpu::Filter<CuckooGpuConfig>;
 
 // It's K - S - M - H
 
-#define SUPERBLOOM_FIRST_INSERT_QUERY_FPR_CONFIG(X) X(31, 28, 16, 4)
+#define CUSBF_FIRST_INSERT_QUERY_FPR_CONFIG(X) X(31, 28, 16, 4)
 
-#define SUPERBLOOM_CONFIGS_INSERT_QUERY_FPR(X) SUPERBLOOM_FIRST_INSERT_QUERY_FPR_CONFIG(X)
+#define CUSBF_CONFIGS_INSERT_QUERY_FPR(X) CUSBF_FIRST_INSERT_QUERY_FPR_CONFIG(X)
 
-#define SUPERBLOOM_CONFIGS_FPR_ONLY(X) \
-    X(31, 31, 21, 4)                   \
-    X(31, 30, 21, 4)                   \
-    X(31, 28, 21, 4)                   \
-    X(31, 27, 21, 4)                   \
-    X(31, 20, 21, 4)                   \
+#define CUSBF_CONFIGS_FPR_ONLY(X) \
+    X(31, 31, 21, 4)              \
+    X(31, 30, 21, 4)              \
+    X(31, 28, 21, 4)              \
+    X(31, 27, 21, 4)              \
+    X(31, 20, 21, 4)              \
     X(31, 16, 21, 4)
 
-#define FOR_EACH_SUPERBLOOM_CONFIG(X)      \
-    SUPERBLOOM_CONFIGS_INSERT_QUERY_FPR(X) \
-    SUPERBLOOM_CONFIGS_FPR_ONLY(X)
+#define FOR_EACH_CUSBF_CONFIG(X)      \
+    CUSBF_CONFIGS_INSERT_QUERY_FPR(X) \
+    CUSBF_CONFIGS_FPR_ONLY(X)
 
 constexpr uint64_t kBitsPerItem = 16;
 
-FOR_EACH_SUPERBLOOM_CONFIG(BENCHMARK_DEFINE_SUPERBLOOM_CONFIG_AND_FIXTURE)
+FOR_EACH_CUSBF_CONFIG(BENCHMARK_DEFINE_CUSBF_CONFIG_AND_FIXTURE)
 
 #define DEFINE_CUCO_REFERENCE_CONFIG(K, S, M, H) \
-    using CucoReferenceConfig = BENCHMARK_SUPERBLOOM_CONFIG_SYMBOL(K, S, M, H);
+    using CucoReferenceConfig = BENCHMARK_CUSBF_CONFIG_SYMBOL(K, S, M, H);
 
-SUPERBLOOM_FIRST_INSERT_QUERY_FPR_CONFIG(DEFINE_CUCO_REFERENCE_CONFIG)
+CUSBF_FIRST_INSERT_QUERY_FPR_CONFIG(DEFINE_CUCO_REFERENCE_CONFIG)
 
 #undef DEFINE_CUCO_REFERENCE_CONFIG
 
@@ -67,11 +67,12 @@ class CucoBloomFixture : public bm::Fixture {
 
    public:
     static constexpr uint64_t k = CucoReferenceConfig::k;
-    using Alphabet = bloom::DnaAlphabet;
+    using Alphabet = cusbf::DnaAlphabet;
 
     void SetUp(const bm::State& state) override {
         sequenceLength = static_cast<uint64_t>(state.range(0));
-        benchData = &benchmark_common::getBenchmarkData<CucoReferenceConfig::k, Alphabet>(sequenceLength);
+        benchData =
+            &benchmark_common::getBenchmarkData<CucoReferenceConfig::k, Alphabet>(sequenceLength);
         numKmers = benchData->numKmers;
 
         d_output.resize(numKmers);
@@ -107,11 +108,12 @@ class CuckooGpuFixture : public bm::Fixture {
 
    public:
     static constexpr uint64_t k = CucoReferenceConfig::k;
-    using Alphabet = bloom::DnaAlphabet;
+    using Alphabet = cusbf::DnaAlphabet;
 
     void SetUp(const bm::State& state) override {
         sequenceLength = static_cast<uint64_t>(state.range(0));
-        benchData = &benchmark_common::getBenchmarkData<CucoReferenceConfig::k, Alphabet>(sequenceLength);
+        benchData =
+            &benchmark_common::getBenchmarkData<CucoReferenceConfig::k, Alphabet>(sequenceLength);
         numKmers = benchData->numKmers;
 
         d_output.resize(numKmers);
@@ -143,7 +145,7 @@ class CuckooGpuFixture : public bm::Fixture {
 void runCucoInsertBenchmark(auto& fixture, bm::State& state) {
     for (auto _ : state) {
         fixture.filter->clear();
-        BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+        CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fixture.timer.start();
         benchmark_common::gpuEncodePackedKmers<
@@ -176,7 +178,7 @@ void runCucoQueryBenchmark(auto& fixture, bm::State& state) {
         fixture.benchData->d_throughputPackedKmers.begin(),
         fixture.benchData->d_throughputPackedKmers.end()
     );
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fixture.timer.start();
@@ -207,7 +209,7 @@ void runCucoFprBenchmark(auto& fixture, bm::State& state) {
         fixture.benchData->d_fprInsertPackedKmers.begin(),
         fixture.benchData->d_fprInsertPackedKmers.end()
     );
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     uint64_t falsePositives = 0;
     for (auto _ : state) {
@@ -232,7 +234,7 @@ void runCucoFprBenchmark(auto& fixture, bm::State& state) {
 void runCuckooGpuInsertBenchmark(auto& fixture, bm::State& state) {
     for (auto _ : state) {
         fixture.filter->clear();
-        BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+        CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fixture.timer.start();
         benchmark_common::gpuEncodePackedKmers<
@@ -259,7 +261,7 @@ void runCuckooGpuQueryBenchmark(auto& fixture, bm::State& state) {
         thrust::raw_pointer_cast(fixture.benchData->d_throughputPackedKmers.data())
     );
     fixture.filter->insertMany(fixture.benchData->d_throughputPackedKmers);
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fixture.timer.start();
@@ -301,8 +303,8 @@ void runCuckooGpuFprBenchmark(auto& fixture, bm::State& state) {
 }
 
 // Protein config: K=12, S=11, M=6, H=4
-using ProteinSuperBloomConfig = bloom::Config<12, 11, 6, 4, 256, bloom::ProteinAlphabet>;
-using ProteinSuperBloomFixture = benchmark_common::SuperBloomConfigFixture<ProteinSuperBloomConfig>;
+using ProteinCuSBFConfig = cusbf::Config<12, 11, 6, 4, 256, cusbf::ProteinAlphabet>;
+using ProteinCuSBFFixture = benchmark_common::CuSbfConfigFixture<ProteinCuSBFConfig>;
 
 class ProteinCucoBloomFixture : public bm::Fixture {
     using bm::Fixture::SetUp;
@@ -310,7 +312,7 @@ class ProteinCucoBloomFixture : public bm::Fixture {
 
    public:
     static constexpr uint64_t k = 12;
-    using Alphabet = bloom::ProteinAlphabet;
+    using Alphabet = cusbf::ProteinAlphabet;
 
     void SetUp(const bm::State& state) override {
         sequenceLength = static_cast<uint64_t>(state.range(0));
@@ -350,7 +352,7 @@ class ProteinCuckooGpuFixture : public bm::Fixture {
 
    public:
     static constexpr uint64_t k = 12;
-    using Alphabet = bloom::ProteinAlphabet;
+    using Alphabet = cusbf::ProteinAlphabet;
 
     void SetUp(const bm::State& state) override {
         sequenceLength = static_cast<uint64_t>(state.range(0));
@@ -407,16 +409,16 @@ BENCHMARK_DEFINE_F(CuckooGpuFixture, FPR)(bm::State& state) {
     runCuckooGpuFprBenchmark(*this, state);
 }
 
-BENCHMARK_DEFINE_F(ProteinSuperBloomFixture, Insert)(bm::State& state) {
-    benchmark_common::runSuperBloomInsert(*this, state);
+BENCHMARK_DEFINE_F(ProteinCuSBFFixture, Insert)(bm::State& state) {
+    benchmark_common::runCuSbfInsert(*this, state);
 }
 
-BENCHMARK_DEFINE_F(ProteinSuperBloomFixture, Query)(bm::State& state) {
-    benchmark_common::runSuperBloomQuery(*this, state);
+BENCHMARK_DEFINE_F(ProteinCuSBFFixture, Query)(bm::State& state) {
+    benchmark_common::runCuSbfQuery(*this, state);
 }
 
-BENCHMARK_DEFINE_F(ProteinSuperBloomFixture, FPR)(bm::State& state) {
-    benchmark_common::runSuperBloomFpr(*this, state);
+BENCHMARK_DEFINE_F(ProteinCuSBFFixture, FPR)(bm::State& state) {
+    benchmark_common::runCuSbfFpr(*this, state);
 }
 
 BENCHMARK_DEFINE_F(ProteinCucoBloomFixture, Insert)(bm::State& state) {
@@ -443,29 +445,29 @@ BENCHMARK_DEFINE_F(ProteinCuckooGpuFixture, FPR)(bm::State& state) {
     runCuckooGpuFprBenchmark(*this, state);
 }
 
-#define DEFINE_SUPERBLOOM_INSERT_QUERY_FPR_BENCHMARKS(K, S, M, H) \
-    BENCHMARK_DEFINE_SUPERBLOOM_ALL(BENCHMARK_SUPERBLOOM_FIXTURE_SYMBOL(K, S, M, H))
+#define DEFINE_CUSBF_INSERT_QUERY_FPR_BENCHMARKS(K, S, M, H) \
+    BENCHMARK_DEFINE_CUSBF_ALL(BENCHMARK_CUSBF_FIXTURE_SYMBOL(K, S, M, H))
 
-#define DEFINE_SUPERBLOOM_FPR_ONLY_BENCHMARKS(K, S, M, H) \
-    BENCHMARK_DEFINE_SUPERBLOOM_FPR_ONLY(BENCHMARK_SUPERBLOOM_FIXTURE_SYMBOL(K, S, M, H))
+#define DEFINE_CUSBF_FPR_ONLY_BENCHMARKS(K, S, M, H) \
+    BENCHMARK_DEFINE_CUSBF_FPR_ONLY(BENCHMARK_CUSBF_FIXTURE_SYMBOL(K, S, M, H))
 
-SUPERBLOOM_CONFIGS_INSERT_QUERY_FPR(DEFINE_SUPERBLOOM_INSERT_QUERY_FPR_BENCHMARKS)
-SUPERBLOOM_CONFIGS_FPR_ONLY(DEFINE_SUPERBLOOM_FPR_ONLY_BENCHMARKS)
+CUSBF_CONFIGS_INSERT_QUERY_FPR(DEFINE_CUSBF_INSERT_QUERY_FPR_BENCHMARKS)
+CUSBF_CONFIGS_FPR_ONLY(DEFINE_CUSBF_FPR_ONLY_BENCHMARKS)
 
-#undef DEFINE_SUPERBLOOM_FPR_ONLY_BENCHMARKS
-#undef DEFINE_SUPERBLOOM_INSERT_QUERY_FPR_BENCHMARKS
+#undef DEFINE_CUSBF_FPR_ONLY_BENCHMARKS
+#undef DEFINE_CUSBF_INSERT_QUERY_FPR_BENCHMARKS
 
-#define REGISTER_SUPERBLOOM_INSERT_QUERY_FPR_BENCHMARKS(K, S, M, H) \
-    BENCHMARK_REGISTER_SUPERBLOOM_ALL(BENCHMARK_SUPERBLOOM_FIXTURE_SYMBOL(K, S, M, H))
+#define REGISTER_CUSBF_INSERT_QUERY_FPR_BENCHMARKS(K, S, M, H) \
+    BENCHMARK_REGISTER_CUSBF_ALL(BENCHMARK_CUSBF_FIXTURE_SYMBOL(K, S, M, H))
 
-#define REGISTER_SUPERBLOOM_FPR_ONLY_BENCHMARKS(K, S, M, H) \
-    BENCHMARK_REGISTER_SUPERBLOOM_FPR_ONLY(BENCHMARK_SUPERBLOOM_FIXTURE_SYMBOL(K, S, M, H))
+#define REGISTER_CUSBF_FPR_ONLY_BENCHMARKS(K, S, M, H) \
+    BENCHMARK_REGISTER_CUSBF_FPR_ONLY(BENCHMARK_CUSBF_FIXTURE_SYMBOL(K, S, M, H))
 
-SUPERBLOOM_CONFIGS_INSERT_QUERY_FPR(REGISTER_SUPERBLOOM_INSERT_QUERY_FPR_BENCHMARKS)
-SUPERBLOOM_CONFIGS_FPR_ONLY(REGISTER_SUPERBLOOM_FPR_ONLY_BENCHMARKS)
+CUSBF_CONFIGS_INSERT_QUERY_FPR(REGISTER_CUSBF_INSERT_QUERY_FPR_BENCHMARKS)
+CUSBF_CONFIGS_FPR_ONLY(REGISTER_CUSBF_FPR_ONLY_BENCHMARKS)
 
-#undef REGISTER_SUPERBLOOM_FPR_ONLY_BENCHMARKS
-#undef REGISTER_SUPERBLOOM_INSERT_QUERY_FPR_BENCHMARKS
+#undef REGISTER_CUSBF_FPR_ONLY_BENCHMARKS
+#undef REGISTER_CUSBF_INSERT_QUERY_FPR_BENCHMARKS
 
 REGISTER_BENCHMARK(CucoBloomFixture, Insert);
 REGISTER_BENCHMARK(CucoBloomFixture, Query);
@@ -475,9 +477,9 @@ REGISTER_BENCHMARK(CuckooGpuFixture, Insert);
 REGISTER_BENCHMARK(CuckooGpuFixture, Query);
 REGISTER_BENCHMARK(CuckooGpuFixture, FPR);
 
-REGISTER_BENCHMARK(ProteinSuperBloomFixture, Insert);
-REGISTER_BENCHMARK(ProteinSuperBloomFixture, Query);
-REGISTER_BENCHMARK(ProteinSuperBloomFixture, FPR);
+REGISTER_BENCHMARK(ProteinCuSBFFixture, Insert);
+REGISTER_BENCHMARK(ProteinCuSBFFixture, Query);
+REGISTER_BENCHMARK(ProteinCuSBFFixture, FPR);
 
 REGISTER_BENCHMARK(ProteinCucoBloomFixture, Insert);
 REGISTER_BENCHMARK(ProteinCucoBloomFixture, Query);
@@ -487,9 +489,9 @@ REGISTER_BENCHMARK(ProteinCuckooGpuFixture, Insert);
 REGISTER_BENCHMARK(ProteinCuckooGpuFixture, Query);
 REGISTER_BENCHMARK(ProteinCuckooGpuFixture, FPR);
 
-#undef FOR_EACH_SUPERBLOOM_CONFIG
-#undef SUPERBLOOM_CONFIGS_FPR_ONLY
-#undef SUPERBLOOM_CONFIGS_INSERT_QUERY_FPR
-#undef SUPERBLOOM_FIRST_INSERT_QUERY_FPR_CONFIG
+#undef FOR_EACH_CUSBF_CONFIG
+#undef CUSBF_CONFIGS_FPR_ONLY
+#undef CUSBF_CONFIGS_INSERT_QUERY_FPR
+#undef CUSBF_FIRST_INSERT_QUERY_FPR_CONFIG
 
 STANDARD_BENCHMARK_MAIN()

@@ -1,5 +1,5 @@
 project(
-    'Bloom Filter',
+    'cuSBF',
     ['cuda', 'cpp'],
     version: '0.1',
     meson_version: '>= 1.3.0',
@@ -22,7 +22,7 @@ cuda_args = [
 
 zlib_dep = subproject('zlib').get_variable('zlib_dep')
 
-bloom_dep = declare_dependency(
+cusbf_dep = declare_dependency(
     include_directories: include_directories('include'),
     dependencies: [zlib_dep],
 )

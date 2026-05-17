@@ -1,12 +1,12 @@
-# GPU Super Bloom Filter
+# cuSBF
 
-[![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://tdortman.github.io/bloom-filter/)
+[![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://tdortman.github.io/cuSBF/)
 
 ## Overview
 
-This library provides a high-performance GPU adaption of the [Super Bloom filter](https://www.biorxiv.org/content/10.64898/2026.03.17.712354v1.article-info) optimised for high-throughput batch k-mer insertion and query on nucleotide (DNA) and protein sequences (or any other sequence type as long as a valid alphabet is provided).
+cuSBF is a high-performance GPU implementation of the [Super Bloom filter](https://www.biorxiv.org/content/10.64898/2026.03.17.712354v1.article-info), optimized for high-throughput batch k-mer insertion and query on nucleotide (DNA) and protein sequences (or any other sequence type as long as a valid alphabet is provided).
 
-It exploits the streaming nature of sequence-derived k-mers by using **minimisers** to group consecutive k-mers sharing the same minimiser into super-k-mers, assigning all k-mers of a super-k-mer to the same 256-bit memory shard. This amortizes random memory accesses across consecutive k-mer queries, reducing memory-bandwidth pressure. The **findere** scheme further reduces false positives dramatically by inserting overlapping s-mers and requiring a full run of consecutive s-mer matches.
+It exploits the streaming nature of sequence-derived k-mers by using **minimizers** to group consecutive k-mers sharing the same minimiser into super-k-mers, assigning all k-mers of a super-k-mer to the same 256-bit memory shard. This amortizes random memory accesses across consecutive k-mer queries, reducing memory-bandwidth pressure. The **findere** scheme further reduces false positives dramatically by inserting overlapping s-mers and requiring a full run of consecutive s-mer matches.
 
 ## Features
 
@@ -19,9 +19,9 @@ It exploits the streaming nature of sequence-derived k-mers by using **minimiser
 
 ## Performance
 
-Benchmarks (`Config<31, 28, 16, 4>`) comparing Super Bloom against NVIDIA's [cuco](https://github.com/NVIDIA/cuCollections) `bloom_filter` on an NVIDIA RTX PRO 6000 Blackwell GPU with random DNA sequence inputs. Throughput is reported in billions of k-mers per second (Gk-mers/s). Timings include GPU-side sequence encoding for cuco, so both methods consume the same input sequence.
+Benchmarks (`Config<31, 28, 16, 4>`) comparing cuSBF against NVIDIA's [cuco](https://github.com/NVIDIA/cuCollections) `bloom_filter` on an NVIDIA RTX PRO 6000 Blackwell GPU with random DNA sequence inputs. Throughput is reported in billions of k-mers per second (Gk-mers/s). Timings include GPU-side sequence encoding for cuco, so both methods consume the same input sequence.
 
-| Dataset Size | Operation | Super Bloom    | cuco Bloom     | Speed-up |
+| Dataset Size | Operation | cuSBF          | cuco Bloom     | Speed-up |
 | ------------ | --------- | -------------- | -------------- | -------- |
 | ~4M k-mers   | Insert    | 62.9 Gk-mers/s | 31.5 Gk-mers/s | 2.0×     |
 | ~4M k-mers   | Query     | 109 Gk-mers/s  | 44.2 Gk-mers/s | 2.5×     |
@@ -30,7 +30,7 @@ Benchmarks (`Config<31, 28, 16, 4>`) comparing Super Bloom against NVIDIA's [cuc
 
 The findere scheme (s-mer width) provides strong false-positive reduction at equivalent memory. For `Config<31, 28, 16, 4>` on ~4.6M inserted k-mers queried against 10⁹ random k-mers:
 
-| Bits/k-mer | Super Bloom FPR | cuco Bloom FPR |
+| Bits/k-mer | cuSBF FPR       | cuco Bloom FPR |
 | ---------- | --------------- | -------------- |
 | 58         | 0.0035%         | 0.064%         |
 | 116        | 0.00036%        | 0.017%         |
@@ -39,7 +39,7 @@ The findere scheme (s-mer width) provides strong false-positive reduction at equ
 Benchmarks can be reproduced with:
 
 ```bash
-./build/benchmarks/gpu-filter-comparison --benchmark_filter="SuperBloom"
+./build/benchmarks/gpu-filter-comparison --benchmark_filter="CuSBF"
 ./build/benchmarks/fpr-fastx-sweep
 ```
 
@@ -99,13 +99,13 @@ meson setup build -Dparam_sweep=enabled -Dparam_sweep_alphabet=protein
 ## Usage
 
 ```cpp
-#include <bloom/BloomFilter.cuh>
+#include <cusbf/BloomFilter.cuh>
 
 // Configure the filter: k-mer length, s-mer width, minimizer width, hash count
-using Config = bloom::Config<31, 28, 16, 4>;
+using Config = cusbf::Config<31, 28, 16, 4>;
 
 // Create a filter with the desired capacity (in bits)
-bloom::Filter<Config> filter(1 << 24);  // ~16M bits
+cusbf::Filter<Config> filter(1 << 24);  // ~16M bits
 
 // Insert k-mers from a DNA sequence (synchronous)
 filter.insertSequence("ACGTACGTACGTACGTACGTACGTACGTACGT");
@@ -116,10 +116,10 @@ auto hits = filter.containsSequence("ACGTACGTACGTACGTACGTACGTACGTACGT");
 // Device-resident API (async, no synchronization)
 thrust::device_vector<char> d_seq = ...;
 thrust::device_vector<uint8_t> d_results(numKmers);
-filter.insertSequenceDevice(bloom::device_span<const char>(d_seq));
+filter.insertSequenceDevice(cusbf::device_span<const char>(d_seq));
 filter.containsSequenceDevice(
-    bloom::device_span<const char>(d_seq),
-    bloom::device_span<uint8_t>(d_results)
+    cusbf::device_span<const char>(d_seq),
+    cusbf::device_span<uint8_t>(d_results)
 );
 
 // FASTA/FASTQ file insertion and query
@@ -147,10 +147,10 @@ The `Config` template accepts the following parameters:
 ### Protein Alphabet Support
 
 ```cpp
-#include <bloom/BloomFilter.cuh>
+#include <cusbf/BloomFilter.cuh>
 
-using ProteinConfig = bloom::Config<12, 10, 6, 4, 256, bloom::ProteinAlphabet>;
-bloom::Filter<ProteinConfig> filter(1 << 24);
+using ProteinConfig = cusbf::Config<12, 10, 6, 4, 256, cusbf::ProteinAlphabet>;
+cusbf::Filter<ProteinConfig> filter(1 << 24);
 
 filter.insertSequence("ACDEFGHIKLMNPQRSTVWY");
 auto hits = filter.containsSequence("ACDEFGHIKLMNPQRSTVWY");

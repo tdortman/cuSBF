@@ -24,7 +24,7 @@ import typer
 app = typer.Typer(help="Plot S/M/H parameter sweep benchmark results")
 
 FIXTURE_PATTERN = re.compile(
-    r"^SuperBloom_K(?P<k>\d+)_S(?P<s>\d+)_M(?P<m>\d+)_H(?P<h>\d+)_Fixture",
+    r"^CuSBF_K(?P<k>\d+)_S(?P<s>\d+)_M(?P<m>\d+)_H(?P<h>\d+)_Fixture",
     re.IGNORECASE,
 )
 

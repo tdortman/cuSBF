@@ -9,9 +9,9 @@
 #include <string_view>
 #include <utility>
 
-#include <bloom/gzstreambuf.hpp>
+#include <cusbf/gzstreambuf.hpp>
 
-namespace bloom {
+namespace cusbf {
 
 /// @brief Summary statistics returned by Filter insert operations on FASTX input.
 struct FastxInsertReport {
@@ -213,4 +213,4 @@ inline std::unique_ptr<std::istream> openFastxFile(std::string_view path) {
 
 }  // namespace detail
 
-}  // namespace bloom
+}  // namespace cusbf

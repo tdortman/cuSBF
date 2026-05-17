@@ -4,7 +4,7 @@
 
 #include <cstddef>
 
-namespace bloom {
+namespace cusbf {
 
 /**
  * @brief A span that is assumed to point to device-accessible memory.
@@ -28,4 +28,4 @@ struct device_span : cuda::std::span<T> {
     }
 };
 
-}  // namespace bloom
+}  // namespace cusbf

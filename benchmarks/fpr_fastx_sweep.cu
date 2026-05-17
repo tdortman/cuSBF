@@ -17,11 +17,11 @@
 
 #include <unistd.h>
 
-#include <bloom/BloomFilter.cuh>
-#include <bloom/device_span.cuh>
-#include <bloom/helpers.cuh>
-#include <bloom/superbloom_ffi.hpp>
 #include <cuco/bloom_filter.cuh>
+#include <cusbf/BloomFilter.cuh>
+#include <cusbf/device_span.cuh>
+#include <cusbf/helpers.cuh>
+#include <cusbf/superbloom_ffi.hpp>
 
 #include "benchmark_common.cuh"
 
@@ -114,7 +114,7 @@ static void prepareFastxData() {
     }
 
     g_fastxData->d_insertSequence.resize(hostInsert.size());
-    BLOOM_CUDA_CALL(cudaMemcpy(
+    CUSBF_CUDA_CALL(cudaMemcpy(
         thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
         hostInsert.data(),
         hostInsert.size(),
@@ -127,7 +127,7 @@ static void prepareFastxData() {
     benchmark_common::gpuGenerateDna(d_fullQuery, kQueryLength, kQuerySeed);
 
     std::vector<char> hostFullQuery(kQueryLength);
-    BLOOM_CUDA_CALL(cudaMemcpy(
+    CUSBF_CUDA_CALL(cudaMemcpy(
         hostFullQuery.data(),
         thrust::raw_pointer_cast(d_fullQuery.data()),
         kQueryLength,
@@ -154,7 +154,7 @@ static void prepareFastxData() {
 
     // Copy concatenated query to GPU
     g_fastxData->d_querySequence.resize(hostConcat.size());
-    BLOOM_CUDA_CALL(cudaMemcpy(
+    CUSBF_CUDA_CALL(cudaMemcpy(
         thrust::raw_pointer_cast(g_fastxData->d_querySequence.data()),
         hostConcat.data(),
         hostConcat.size(),
@@ -179,7 +179,7 @@ static void prepareFastxData() {
         thrust::raw_pointer_cast(g_fastxData->d_queryPackedKmers.data())
     );
 
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
 
 static void setFprFastxCounters(
@@ -200,7 +200,7 @@ static void setFprFastxCounters(
 }
 
 template <typename Config>
-class SuperBloomFprFastxFixture : public bm::Fixture {
+class CuSbfFprFastxFixture : public bm::Fixture {
     using bm::Fixture::SetUp;
     using bm::Fixture::TearDown;
 
@@ -209,7 +209,7 @@ class SuperBloomFprFastxFixture : public bm::Fixture {
         prepareFastxData();
 
         filterBits = static_cast<uint64_t>(state.range(0));
-        filter = std::make_unique<bloom::Filter<Config>>(filterBits);
+        filter = std::make_unique<cusbf::Filter<Config>>(filterBits);
         filterMemory = filter->filterBits() / 8;
 
         d_output.resize(g_fastxData->queryKmers);
@@ -224,30 +224,30 @@ class SuperBloomFprFastxFixture : public bm::Fixture {
     uint64_t filterBits = 0;
     uint64_t filterMemory = 0;
     thrust::device_vector<uint8_t> d_output;
-    std::unique_ptr<bloom::Filter<Config>> filter;
+    std::unique_ptr<cusbf::Filter<Config>> filter;
     benchmark_common::GPUTimer timer;
 };
 
-#define SUPERBLOOM_FPR_FASTX_CONFIG_SYMBOL(S) SuperBloom_K31_S##S##_M21_H4_FprFastxConfig
-#define SUPERBLOOM_FPR_FASTX_FIXTURE_SYMBOL(S) SuperBloom_K31_S##S##_M21_H4_FprFastxFixture
+#define CUSBF_FPR_FASTX_CONFIG_SYMBOL(S) CuSBF_K31_S##S##_M21_H4_FprFastxConfig
+#define CUSBF_FPR_FASTX_FIXTURE_SYMBOL(S) CuSBF_K31_S##S##_M21_H4_FprFastxFixture
 
-#define DEFINE_SUPERBLOOM_FPR_FASTX_CONFIG_AND_FIXTURE(S)                           \
-    using SUPERBLOOM_FPR_FASTX_CONFIG_SYMBOL(S) = bloom::Config<31, S, 21, 4, 256>; \
-    using SUPERBLOOM_FPR_FASTX_FIXTURE_SYMBOL(S) =                                  \
-        SuperBloomFprFastxFixture<SUPERBLOOM_FPR_FASTX_CONFIG_SYMBOL(S)>;
+#define DEFINE_CUSBF_FPR_FASTX_CONFIG_AND_FIXTURE(S)                           \
+    using CUSBF_FPR_FASTX_CONFIG_SYMBOL(S) = cusbf::Config<31, S, 21, 4, 256>; \
+    using CUSBF_FPR_FASTX_FIXTURE_SYMBOL(S) =                                  \
+        CuSbfFprFastxFixture<CUSBF_FPR_FASTX_CONFIG_SYMBOL(S)>;
 
-#define FOR_EACH_SUPERBLOOM_FPR_FASTX_CONFIG(X) \
-    X(20)                                       \
-    X(22)                                       \
-    X(24)                                       \
-    X(26)                                       \
-    X(28)                                       \
-    X(30)                                       \
+#define FOR_EACH_CUSBF_FPR_FASTX_CONFIG(X) \
+    X(20)                                  \
+    X(22)                                  \
+    X(24)                                  \
+    X(26)                                  \
+    X(28)                                  \
+    X(30)                                  \
     X(31)
 
-FOR_EACH_SUPERBLOOM_FPR_FASTX_CONFIG(DEFINE_SUPERBLOOM_FPR_FASTX_CONFIG_AND_FIXTURE)
+FOR_EACH_CUSBF_FPR_FASTX_CONFIG(DEFINE_CUSBF_FPR_FASTX_CONFIG_AND_FIXTURE)
 
-#undef DEFINE_SUPERBLOOM_FPR_FASTX_CONFIG_AND_FIXTURE
+#undef DEFINE_CUSBF_FPR_FASTX_CONFIG_AND_FIXTURE
 
 class CucoBloomFprFastxFixture : public bm::Fixture {
     using bm::Fixture::SetUp;
@@ -298,7 +298,7 @@ class SuperBloomCpuFprFastxFixture : public bm::Fixture {
 
         // Copy insert sequence to host
         h_insertSequence.resize(g_fastxData->d_insertSequence.size());
-        BLOOM_CUDA_CALL(cudaMemcpy(
+        CUSBF_CUDA_CALL(cudaMemcpy(
             h_insertSequence.data(),
             thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
             g_fastxData->d_insertSequence.size(),
@@ -348,24 +348,24 @@ class SuperBloomCpuFprFastxFixture : public bm::Fixture {
 };
 
 template <typename Fixture>
-void runSuperBloomFprFastxBenchmark(Fixture& fixture, bm::State& state) {
+void runCuSbfFprFastxBenchmark(Fixture& fixture, bm::State& state) {
     fixture.filter->clear();
     benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
-        bloom::device_span<const char>{
+        cusbf::device_span<const char>{
             thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
             g_fastxData->d_insertSequence.size()
         }
     ));
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fixture.timer.start();
         fixture.filter->containsSequenceDevice(
-            bloom::device_span<const char>{
+            cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(g_fastxData->d_querySequence.data()),
                 g_fastxData->d_querySequence.size()
             },
-            bloom::device_span<uint8_t>{
+            cusbf::device_span<uint8_t>{
                 thrust::raw_pointer_cast(fixture.d_output.data()), fixture.d_output.size()
             }
         );
@@ -393,7 +393,7 @@ void runCucoFprFastxBenchmark(CucoBloomFprFastxFixture& fixture, bm::State& stat
     fixture.filter->add(
         g_fastxData->d_insertPackedKmers.begin(), g_fastxData->d_insertPackedKmers.end()
     );
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fixture.timer.start();
@@ -459,15 +459,15 @@ void runSuperBloomCpuFprFastxBenchmark(SuperBloomCpuFprFastxFixture& fixture, bm
     benchmark_common::setFprCounters(state, falsePositives, g_fastxData->queryFastxKmers);
 }
 
-#define DEFINE_SUPERBLOOM_FPR_FASTX_BENCHMARK(S)                    \
-    BENCHMARK_DEFINE_F(SUPERBLOOM_FPR_FASTX_FIXTURE_SYMBOL(S), FPR) \
-    (bm::State & state) {                                           \
-        runSuperBloomFprFastxBenchmark(*this, state);               \
+#define DEFINE_CUSBF_FPR_FASTX_BENCHMARK(S)                    \
+    BENCHMARK_DEFINE_F(CUSBF_FPR_FASTX_FIXTURE_SYMBOL(S), FPR) \
+    (bm::State & state) {                                      \
+        runCuSbfFprFastxBenchmark(*this, state);               \
     }
 
-FOR_EACH_SUPERBLOOM_FPR_FASTX_CONFIG(DEFINE_SUPERBLOOM_FPR_FASTX_BENCHMARK)
+FOR_EACH_CUSBF_FPR_FASTX_CONFIG(DEFINE_CUSBF_FPR_FASTX_BENCHMARK)
 
-#undef DEFINE_SUPERBLOOM_FPR_FASTX_BENCHMARK
+#undef DEFINE_CUSBF_FPR_FASTX_BENCHMARK
 
 BENCHMARK_DEFINE_F(CucoBloomFprFastxFixture, FPR)(bm::State& state) {
     runCucoFprFastxBenchmark(*this, state);
@@ -477,19 +477,19 @@ BENCHMARK_DEFINE_F(SuperBloomCpuFprFastxFixture, FPR)(bm::State& state) {
     runSuperBloomCpuFprFastxBenchmark(*this, state);
 }
 
-#define REGISTER_SUPERBLOOM_FPR_FASTX_BENCHMARK(S) \
-    REGISTER_BENCHMARK_FPR_FASTX_SWEEP(SUPERBLOOM_FPR_FASTX_FIXTURE_SYMBOL(S), FPR);
+#define REGISTER_CUSBF_FPR_FASTX_BENCHMARK(S) \
+    REGISTER_BENCHMARK_FPR_FASTX_SWEEP(CUSBF_FPR_FASTX_FIXTURE_SYMBOL(S), FPR);
 
-FOR_EACH_SUPERBLOOM_FPR_FASTX_CONFIG(REGISTER_SUPERBLOOM_FPR_FASTX_BENCHMARK)
+FOR_EACH_CUSBF_FPR_FASTX_CONFIG(REGISTER_CUSBF_FPR_FASTX_BENCHMARK)
 
-#undef REGISTER_SUPERBLOOM_FPR_FASTX_BENCHMARK
+#undef REGISTER_CUSBF_FPR_FASTX_BENCHMARK
 
 REGISTER_BENCHMARK_FPR_FASTX_SWEEP(CucoBloomFprFastxFixture, FPR);
 REGISTER_BENCHMARK_FPR_FASTX_SWEEP(SuperBloomCpuFprFastxFixture, FPR);
 
-#undef FOR_EACH_SUPERBLOOM_FPR_FASTX_CONFIG
-#undef SUPERBLOOM_FPR_FASTX_FIXTURE_SYMBOL
-#undef SUPERBLOOM_FPR_FASTX_CONFIG_SYMBOL
+#undef FOR_EACH_CUSBF_FPR_FASTX_CONFIG
+#undef CUSBF_FPR_FASTX_FIXTURE_SYMBOL
+#undef CUSBF_FPR_FASTX_CONFIG_SYMBOL
 
 void parseCustomArgs(int argc, char** argv, std::vector<char*>& benchmarkArgv) {
     benchmarkArgv.clear();

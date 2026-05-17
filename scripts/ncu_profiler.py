@@ -6,15 +6,15 @@ from typing import Optional
 import pandas as pd
 import typer
 
-FILTERS = ["superbloom", "cucobloom", "cuckoogpu"]
+FILTERS = ["cusbf", "cucobloom", "cuckoogpu"]
 OPERATIONS = {
-    "superbloom": ["insert", "query"],
+    "cusbf": ["insert", "query"],
     "cucobloom": ["insert", "query"],
     "cuckoogpu": ["insert", "query"],
 }
 
 KERNEL_PATTERNS = {
-    "superbloom": {
+    "cusbf": {
         "insert": ["insertSequenceKmersKernel"],
         "query": ["containsSequenceKmersKernel"],
     },
@@ -48,7 +48,7 @@ def run_ncu_profile(
 
     Args:
         executable: Path to the benchmark executable
-        filter_type: Type of filter (superbloom, cucobloom, cuckoogpu)
+        filter_type: Type of filter (cusbf, cucobloom, cuckoogpu)
         operation: Operation (insert, query)
         capacity_exponent: Log2 of capacity (e.g. 20 for 1M)
         load_factor: Load factor (e.g. 0.95)

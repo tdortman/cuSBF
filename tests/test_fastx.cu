@@ -10,7 +10,7 @@
 #include "test_support.cuh"
 
 TEST_F(BloomFilterTest, InsertFastxFileParsesWrappedFastaRecords) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGT";
     const auto file = writeTempFile(
@@ -30,7 +30,7 @@ TEST_F(BloomFilterTest, InsertFastxFileParsesWrappedFastaRecords) {
 }
 
 TEST_F(BloomFilterTest, QueryFastxFileParsesWrappedFastqWithCrLf) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGT";
     (void)filter.insertSequence(sequence);
@@ -53,7 +53,7 @@ TEST_F(BloomFilterTest, QueryFastxFileParsesWrappedFastqWithCrLf) {
 }
 
 TEST_F(BloomFilterTest, QueryFastxFileDoesNotCreateCrossRecordKmers) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const std::string sequenceA = "ACGTACGT";
     const std::string sequenceB = "TGCATGCA";
@@ -81,7 +81,7 @@ TEST_F(BloomFilterTest, QueryFastxFileDoesNotCreateCrossRecordKmers) {
 }
 
 TEST_F(BloomFilterTest, TripletQueryFastxFileDoesNotCreateCrossRecordKmers) {
-    bloom::Filter<TripletTestConfig> filter(1 << 12);
+    cusbf::Filter<TripletTestConfig> filter(1 << 12);
 
     const std::string sequenceA = "ACGTACGTT";
     const std::string sequenceB = "GGGTTTAAA";
@@ -104,7 +104,7 @@ TEST_F(BloomFilterTest, TripletQueryFastxFileDoesNotCreateCrossRecordKmers) {
 }
 
 TEST_F(BloomFilterTest, FastxReportsOnlyValidKmers) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const auto file = writeTempFile(
         ">with-invalid\n"
@@ -124,7 +124,7 @@ TEST_F(BloomFilterTest, FastxReportsOnlyValidKmers) {
 }
 
 TEST_F(BloomFilterTest, MalformedFastqThrowsOnQualityLengthMismatch) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const auto file = writeTempFile(
         "@broken\n"

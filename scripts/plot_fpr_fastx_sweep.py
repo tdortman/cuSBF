@@ -19,8 +19,8 @@ import typer
 
 app = typer.Typer(help="Plot FPR FASTX sweep benchmark results")
 
-SUPERBLOOM_CONFIG_FIXTURE_PATTERN = re.compile(
-    r"^SuperBloom_K(?P<k>\d+)_S(?P<s>\d+)_M(?P<m>\d+)_H(?P<h>\d+)_FprFastxFixture$",
+CUSBF_CONFIG_FIXTURE_PATTERN = re.compile(
+    r"^CuSBF_K(?P<k>\d+)_S(?P<s>\d+)_M(?P<m>\d+)_H(?P<h>\d+)_FprFastxFixture$",
     re.IGNORECASE,
 )
 SUPERBLOOM_CPU_FIXTURE_PATTERN = re.compile(
@@ -28,8 +28,8 @@ SUPERBLOOM_CPU_FIXTURE_PATTERN = re.compile(
 )
 CUCO_FIXTURE_PATTERN = re.compile(r"^CucoBloomFprFastxFixture$", re.IGNORECASE)
 
-SUPERBLOOM_VARIANT_MARKERS = ["o", "s", "^", "D", "P", "X", "v", "<", ">", "h", "*", "p", "H"]
-SUPERBLOOM_VARIANT_LINESTYLES = ["-", "--", "-.", ":"]
+CUSBF_VARIANT_MARKERS = ["o", "s", "^", "D", "P", "X", "v", "<", ">", "h", "*", "p", "H"]
+CUSBF_VARIANT_LINESTYLES = ["-", "--", "-.", ":"]
 
 
 def extract_filter_series(name: str) -> Optional[tuple[str, str, str]]:
@@ -41,14 +41,14 @@ def extract_filter_series(name: str) -> Optional[tuple[str, str, str]]:
         fixture_name = parts[0]
         operation = parts[1]
 
-        config_match = SUPERBLOOM_CONFIG_FIXTURE_PATTERN.match(fixture_name)
+        config_match = CUSBF_CONFIG_FIXTURE_PATTERN.match(fixture_name)
         if config_match is not None:
             if operation.upper() != "FPR":
                 return None
             s = int(config_match.group("s"))
-            series_key = f"superbloom_s{s}"
-            display_name = f"{pu.get_filter_display_name('superbloom')} (s={s})"
-            return series_key, "superbloom", display_name
+            series_key = f"cusbf_s{s}"
+            display_name = f"{pu.get_filter_display_name('cusbf')} (s={s})"
+            return series_key, "cusbf", display_name
 
         if CUCO_FIXTURE_PATTERN.match(fixture_name) is not None:
             if operation.upper() != "FPR":
@@ -72,7 +72,7 @@ def extract_filter_series(name: str) -> Optional[tuple[str, str, str]]:
 
 
 def get_plot_style(filter_type: str, base_filter: str) -> dict[str, str]:
-    """Get style for a filter series, including SuperBloom variant styling."""
+    """Get style for a filter series, including cuSBF variant styling."""
     style = dict(
         pu.FILTER_STYLES.get(
             filter_type,
@@ -80,15 +80,15 @@ def get_plot_style(filter_type: str, base_filter: str) -> dict[str, str]:
         )
     )
 
-    if base_filter == "superbloom" and filter_type.startswith("superbloom_s"):
+    if base_filter == "cusbf" and filter_type.startswith("cusbf_s"):
         variant_match = re.search(r"_s(\d+)$", filter_type)
         if variant_match is not None:
             variant_index = int(variant_match.group(1))
-            style["marker"] = SUPERBLOOM_VARIANT_MARKERS[
-                variant_index % len(SUPERBLOOM_VARIANT_MARKERS)
+            style["marker"] = CUSBF_VARIANT_MARKERS[
+                variant_index % len(CUSBF_VARIANT_MARKERS)
             ]
-            style["linestyle"] = SUPERBLOOM_VARIANT_LINESTYLES[
-                variant_index % len(SUPERBLOOM_VARIANT_LINESTYLES)
+            style["linestyle"] = CUSBF_VARIANT_LINESTYLES[
+                variant_index % len(CUSBF_VARIANT_LINESTYLES)
             ]
 
     return style
@@ -142,7 +142,7 @@ def main(
         typer.secho("No false-positive data found in CSV", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
 
-    # Sort filters: Cuco first, then SuperBloom by descending s
+    # Sort filters: Cuco first, then cuSBF by descending s
     def sort_key(filter_type: str) -> tuple:
         if filter_type == "cucobloom":
             return (0, "")

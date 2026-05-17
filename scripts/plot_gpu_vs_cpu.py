@@ -7,7 +7,7 @@
 #   "pandas",
 # ]
 # ///
-"""Plot GPU vs CPU SuperBloom comparison from a CSV file.
+"""Plot cuSBF vs CPU SuperBloom comparison from a CSV file.
 
 Reads a two-row CSV (implementation=gpu / cpu_rust) produced by
 compare_gpu_vs_cpu.py and generates a throughput comparison bar chart.
@@ -69,7 +69,7 @@ def generate_plot(
     if len(available) == 1:
         axes = [axes]
 
-    gpu_style = FILTER_STYLES["superbloom"]
+    gpu_style = FILTER_STYLES["cusbf"]
     cpu_color = "#E8871E"
 
     for ax, (key, label, scale, unit) in zip(axes, available):
@@ -106,7 +106,7 @@ def generate_plot(
         config_str = f"K={config['k']} S={config['s']} M={config['m']} H={config['n_hashes']}"
     else:
         config_str = ""
-    suptitle = "GPU vs CPU SuperBloom" + (f" ({config_str})" if config_str else "")
+    suptitle = "cuSBF vs CPU SuperBloom" + (f" ({config_str})" if config_str else "")
     fig.suptitle(
         suptitle,
         fontsize=TITLE_FONT_SIZE + 2,

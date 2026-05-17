@@ -28,10 +28,10 @@
 
 #include <cuda/std/bit>
 
-#include <bloom/BloomFilter.cuh>
-#include <bloom/device_span.cuh>
-#include <bloom/helpers.cuh>
-#include <bloom/superbloom_ffi.hpp>
+#include <cusbf/BloomFilter.cuh>
+#include <cusbf/device_span.cuh>
+#include <cusbf/helpers.cuh>
+#include <cusbf/superbloom_ffi.hpp>
 
 namespace benchmark_common {
 
@@ -90,8 +90,8 @@ writeGeneratedFasta(const std::vector<char>& sequence, uint64_t numRecords, cons
 class GPUTimer {
    public:
     GPUTimer() {
-        BLOOM_CUDA_CALL(cudaEventCreate(&start_));
-        BLOOM_CUDA_CALL(cudaEventCreate(&stop_));
+        CUSBF_CUDA_CALL(cudaEventCreate(&start_));
+        CUSBF_CUDA_CALL(cudaEventCreate(&stop_));
     }
 
     ~GPUTimer() {
@@ -103,15 +103,15 @@ class GPUTimer {
     GPUTimer& operator=(const GPUTimer&) = delete;
 
     void start(cudaStream_t stream = {}) {
-        BLOOM_CUDA_CALL(cudaEventRecord(start_, stream));
+        CUSBF_CUDA_CALL(cudaEventRecord(start_, stream));
     }
 
     [[nodiscard]] double elapsed(cudaStream_t stream = {}) {
-        BLOOM_CUDA_CALL(cudaEventRecord(stop_, stream));
-        BLOOM_CUDA_CALL(cudaEventSynchronize(stop_));
+        CUSBF_CUDA_CALL(cudaEventRecord(stop_, stream));
+        CUSBF_CUDA_CALL(cudaEventSynchronize(stop_));
 
         float milliseconds = 0.0f;
-        BLOOM_CUDA_CALL(cudaEventElapsedTime(&milliseconds, start_, stop_));
+        CUSBF_CUDA_CALL(cudaEventElapsedTime(&milliseconds, start_, stop_));
         return static_cast<double>(milliseconds) / 1000.0;
     }
 
@@ -138,9 +138,9 @@ class CPUTimer {
 // Concatenate all records in a FASTA/FASTQ file into a single sequence,
 // with 'N' as a separatorbetween records
 std::vector<char> readFastxConcatenated(std::string_view path) {
-    auto input = bloom::detail::openFastxFile(path);
-    bloom::detail::FastxReader reader(*input, path);
-    bloom::detail::FastxRecord record;
+    auto input = cusbf::detail::openFastxFile(path);
+    cusbf::detail::FastxReader reader(*input, path);
+    cusbf::detail::FastxRecord record;
 
     std::vector<char> sequence;
     bool firstRecord = true;
@@ -255,7 +255,7 @@ inline void gpuGeneratePackedKmers(
     );
 }
 
-template <uint64_t K, typename Alphabet = bloom::DnaAlphabet>
+template <uint64_t K, typename Alphabet = cusbf::DnaAlphabet>
 __global__ void encodePackedKmersKernel(const char* sequence, uint64_t numKmers, uint64_t* output) {
     constexpr uint64_t symbolBits = cuda::std::bit_width(Alphabet::symbolCount - 1);
     constexpr uint64_t symbolMask = (uint64_t{1} << symbolBits) - 1;
@@ -272,7 +272,7 @@ __global__ void encodePackedKmersKernel(const char* sequence, uint64_t numKmers,
     output[idx] = packed;
 }
 
-template <uint64_t K, typename Alphabet = bloom::DnaAlphabet>
+template <uint64_t K, typename Alphabet = cusbf::DnaAlphabet>
 inline void gpuEncodePackedKmers(
     const char* d_sequence,
     uint64_t sequenceLength,
@@ -290,7 +290,7 @@ inline void gpuEncodePackedKmers(
         <<<gridSize, blockSize, 0, stream>>>(d_sequence, numKmers, d_output);
 }
 
-template <uint64_t K, typename Alphabet = bloom::DnaAlphabet>
+template <uint64_t K, typename Alphabet = cusbf::DnaAlphabet>
 struct BenchmarkData {
     uint64_t sequenceLength{};
     uint64_t numKmers{};
@@ -305,7 +305,7 @@ struct BenchmarkData {
     bool fprDataReady = false;
 
     void generateThroughputData() {
-        if constexpr (std::is_same_v<Alphabet, bloom::ProteinAlphabet>) {
+        if constexpr (std::is_same_v<Alphabet, cusbf::ProteinAlphabet>) {
             gpuGenerateProtein(d_throughputSequence, sequenceLength, 42);
         } else {
             gpuGenerateDna(d_throughputSequence, sequenceLength, 42);
@@ -323,7 +323,7 @@ struct BenchmarkData {
 
    private:
     void generateFprData() {
-        if constexpr (std::is_same_v<Alphabet, bloom::ProteinAlphabet>) {
+        if constexpr (std::is_same_v<Alphabet, cusbf::ProteinAlphabet>) {
             gpuGenerateProtein(d_fprInsertSequence, sequenceLength, 7);
             gpuGenerateProtein(d_zeroOverlapSequence, sequenceLength, 1337);
         } else {
@@ -345,13 +345,13 @@ struct BenchmarkData {
             thrust::raw_pointer_cast(d_zeroOverlapPackedKmers.data())
         );
 
-        BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+        CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fprDataReady = true;
     }
 };
 
-template <uint64_t K, typename Alphabet = bloom::DnaAlphabet>
+template <uint64_t K, typename Alphabet = cusbf::DnaAlphabet>
 BenchmarkData<K, Alphabet>& getBenchmarkData(uint64_t length) {
     static std::unordered_map<uint64_t, BenchmarkData<K, Alphabet>> cache;
 
@@ -365,13 +365,13 @@ BenchmarkData<K, Alphabet>& getBenchmarkData(uint64_t length) {
     BenchmarkData<K, Alphabet> data;
     data.sequenceLength = length;
     data.generateThroughputData();
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     return cache.emplace(length, std::move(data)).first->second;
 }
 
 template <typename Config>
-class SuperBloomFixtureBase : public benchmark::Fixture {
+class CuSbfFixtureBase : public benchmark::Fixture {
    public:
     static constexpr uint64_t k = Config::k;
 
@@ -383,7 +383,7 @@ class SuperBloomFixtureBase : public benchmark::Fixture {
         numSmers = sequenceLength - Config::s + 1;
 
         const uint64_t requestedFilterBits = cuda::std::bit_ceil(numKmers * 16);
-        filter = std::make_unique<bloom::Filter<Config>>(requestedFilterBits);
+        filter = std::make_unique<cusbf::Filter<Config>>(requestedFilterBits);
         filterMemory = filter->filterBits() / 8;
         d_output.resize(numKmers);
     }
@@ -407,12 +407,12 @@ class SuperBloomFixtureBase : public benchmark::Fixture {
     uint64_t filterMemory{};
     BenchmarkData<Config::k, typename Config::Alphabet>* benchData{};
     thrust::device_vector<uint8_t> d_output;
-    std::unique_ptr<bloom::Filter<Config>> filter;
+    std::unique_ptr<cusbf::Filter<Config>> filter;
     GPUTimer timer;
 };
 
 template <typename Config>
-class SuperBloomConfigFixture : public SuperBloomFixtureBase<Config> {
+class CuSbfConfigFixture : public CuSbfFixtureBase<Config> {
     using benchmark::Fixture::SetUp;
     using benchmark::Fixture::TearDown;
 
@@ -427,14 +427,14 @@ class SuperBloomConfigFixture : public SuperBloomFixtureBase<Config> {
 };
 
 template <typename Fixture>
-void runSuperBloomInsert(Fixture& fixture, benchmark::State& state) {
+void runCuSbfInsert(Fixture& fixture, benchmark::State& state) {
     for (auto _ : state) {
         fixture.filter->clear();
-        BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+        CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fixture.timer.start();
         benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
-            bloom::device_span<const char>{
+            cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(fixture.benchData->d_throughputSequence.data()),
                 fixture.sequenceLength
             }
@@ -446,24 +446,24 @@ void runSuperBloomInsert(Fixture& fixture, benchmark::State& state) {
 }
 
 template <typename Fixture>
-void runSuperBloomQuery(Fixture& fixture, benchmark::State& state) {
+void runCuSbfQuery(Fixture& fixture, benchmark::State& state) {
     fixture.filter->clear();
     benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
-        bloom::device_span<const char>{
+        cusbf::device_span<const char>{
             thrust::raw_pointer_cast(fixture.benchData->d_throughputSequence.data()),
             fixture.sequenceLength
         }
     ));
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fixture.timer.start();
         fixture.filter->containsSequenceDevice(
-            bloom::device_span<const char>{
+            cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(fixture.benchData->d_throughputSequence.data()),
                 fixture.sequenceLength
             },
-            bloom::device_span<uint8_t>{
+            cusbf::device_span<uint8_t>{
                 thrust::raw_pointer_cast(fixture.d_output.data()), fixture.d_output.size()
             }
         );
@@ -475,27 +475,27 @@ void runSuperBloomQuery(Fixture& fixture, benchmark::State& state) {
 }
 
 template <typename Fixture>
-void runSuperBloomFpr(Fixture& fixture, benchmark::State& state) {
+void runCuSbfFpr(Fixture& fixture, benchmark::State& state) {
     fixture.benchData->ensureFprData();
 
     fixture.filter->clear();
     benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
-        bloom::device_span<const char>{
+        cusbf::device_span<const char>{
             thrust::raw_pointer_cast(fixture.benchData->d_fprInsertSequence.data()),
             fixture.sequenceLength
         }
     ));
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     uint64_t falsePositives = 0;
     for (auto _ : state) {
         fixture.timer.start();
         fixture.filter->containsSequenceDevice(
-            bloom::device_span<const char>{
+            cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(fixture.benchData->d_zeroOverlapSequence.data()),
                 fixture.sequenceLength
             },
-            bloom::device_span<uint8_t>{
+            cusbf::device_span<uint8_t>{
                 thrust::raw_pointer_cast(fixture.d_output.data()), fixture.d_output.size()
             }
         );
@@ -592,7 +592,7 @@ class SuperBloomCpuFixture : public benchmark::Fixture {
         if (!h_sequence.empty() || sequenceLength == 0)
             return;
         h_sequence.resize(sequenceLength);
-        BLOOM_CUDA_CALL(cudaMemcpy(
+        CUSBF_CUDA_CALL(cudaMemcpy(
             h_sequence.data(),
             thrust::raw_pointer_cast(benchData->d_throughputSequence.data()),
             sequenceLength,
@@ -629,7 +629,7 @@ class SuperBloomCpuFixture : public benchmark::Fixture {
         benchData->ensureFprData();
 
         std::vector<char> fprHostSeq(sequenceLength);
-        BLOOM_CUDA_CALL(cudaMemcpy(
+        CUSBF_CUDA_CALL(cudaMemcpy(
             fprHostSeq.data(),
             thrust::raw_pointer_cast(benchData->d_fprInsertSequence.data()),
             sequenceLength,
@@ -637,7 +637,7 @@ class SuperBloomCpuFixture : public benchmark::Fixture {
         ));
 
         std::vector<char> zeroHostSeq(sequenceLength);
-        BLOOM_CUDA_CALL(cudaMemcpy(
+        CUSBF_CUDA_CALL(cudaMemcpy(
             zeroHostSeq.data(),
             thrust::raw_pointer_cast(benchData->d_zeroOverlapSequence.data()),
             sequenceLength,
@@ -764,7 +764,7 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
 
     std::vector<char> fprHostSeq(fixture.sequenceLength);
     if (!g_cpuFastxParallelizeRecords) {
-        BLOOM_CUDA_CALL(cudaMemcpy(
+        CUSBF_CUDA_CALL(cudaMemcpy(
             fprHostSeq.data(),
             thrust::raw_pointer_cast(fixture.benchData->d_fprInsertSequence.data()),
             fixture.sequenceLength,
@@ -774,7 +774,7 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
 
     std::vector<char> zeroHostSeq(fixture.sequenceLength);
     if (!g_cpuFastxParallelizeRecords) {
-        BLOOM_CUDA_CALL(cudaMemcpy(
+        CUSBF_CUDA_CALL(cudaMemcpy(
             zeroHostSeq.data(),
             thrust::raw_pointer_cast(fixture.benchData->d_zeroOverlapSequence.data()),
             fixture.sequenceLength,
@@ -830,31 +830,31 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
 
 }  // namespace benchmark_common
 
-#define BENCHMARK_SUPERBLOOM_CONFIG_SYMBOL(K, S, M, H) SuperBloom_K##K##_S##S##_M##M##_H##H##_Config
-#define BENCHMARK_SUPERBLOOM_FIXTURE_SYMBOL(K, S, M, H) \
-    SuperBloom_K##K##_S##S##_M##M##_H##H##_Fixture
+#define BENCHMARK_CUSBF_CONFIG_SYMBOL(K, S, M, H) CuSBF_K##K##_S##S##_M##M##_H##H##_Config
+#define BENCHMARK_CUSBF_FIXTURE_SYMBOL(K, S, M, H) \
+    CuSBF_K##K##_S##S##_M##M##_H##H##_Fixture
 #define BENCHMARK_SUPERBLOOM_CPU_FIXTURE_SYMBOL(K, S, M, H) \
     SuperBloomCpu_K##K##_S##S##_M##M##_H##H##_Fixture
 
-#define BENCHMARK_DEFINE_SUPERBLOOM_CONFIG_AND_FIXTURE(K, S, M, H)                         \
-    using BENCHMARK_SUPERBLOOM_CONFIG_SYMBOL(K, S, M, H) = bloom::Config<K, S, M, H, 256>; \
-    using BENCHMARK_SUPERBLOOM_FIXTURE_SYMBOL(K, S, M, H) =                                \
-        benchmark_common::SuperBloomConfigFixture<BENCHMARK_SUPERBLOOM_CONFIG_SYMBOL(K, S, M, H)>;
+#define BENCHMARK_DEFINE_CUSBF_CONFIG_AND_FIXTURE(K, S, M, H)                         \
+    using BENCHMARK_CUSBF_CONFIG_SYMBOL(K, S, M, H) = cusbf::Config<K, S, M, H, 256>; \
+    using BENCHMARK_CUSBF_FIXTURE_SYMBOL(K, S, M, H) =                                \
+        benchmark_common::CuSbfConfigFixture<BENCHMARK_CUSBF_CONFIG_SYMBOL(K, S, M, H)>;
 
-#define BENCHMARK_DEFINE_SUPERBLOOM_ALL(FixtureName)                    \
+#define BENCHMARK_DEFINE_CUSBF_ALL(FixtureName)                    \
     BENCHMARK_DEFINE_F(FixtureName, Insert)(benchmark::State & state) { \
-        benchmark_common::runSuperBloomInsert(*this, state);            \
+        benchmark_common::runCuSbfInsert(*this, state);            \
     }                                                                   \
     BENCHMARK_DEFINE_F(FixtureName, Query)(benchmark::State & state) {  \
-        benchmark_common::runSuperBloomQuery(*this, state);             \
+        benchmark_common::runCuSbfQuery(*this, state);             \
     }                                                                   \
     BENCHMARK_DEFINE_F(FixtureName, FPR)(benchmark::State & state) {    \
-        benchmark_common::runSuperBloomFpr(*this, state);               \
+        benchmark_common::runCuSbfFpr(*this, state);               \
     }
 
-#define BENCHMARK_DEFINE_SUPERBLOOM_FPR_ONLY(FixtureName)            \
+#define BENCHMARK_DEFINE_CUSBF_FPR_ONLY(FixtureName)            \
     BENCHMARK_DEFINE_F(FixtureName, FPR)(benchmark::State & state) { \
-        benchmark_common::runSuperBloomFpr(*this, state);            \
+        benchmark_common::runCuSbfFpr(*this, state);            \
     }
 
 #define BENCHMARK_DEFINE_SUPERBLOOM_CPU_ALL(FixtureName)                \
@@ -873,12 +873,12 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
         benchmark_common::runSuperBloomCpuFpr(*this, state);         \
     }
 
-#define BENCHMARK_REGISTER_SUPERBLOOM_ALL(FixtureName) \
+#define BENCHMARK_REGISTER_CUSBF_ALL(FixtureName) \
     REGISTER_BENCHMARK(FixtureName, Insert);           \
     REGISTER_BENCHMARK(FixtureName, Query);            \
     REGISTER_BENCHMARK(FixtureName, FPR);
 
-#define BENCHMARK_REGISTER_SUPERBLOOM_FPR_ONLY(FixtureName) REGISTER_BENCHMARK(FixtureName, FPR);
+#define BENCHMARK_REGISTER_CUSBF_FPR_ONLY(FixtureName) REGISTER_BENCHMARK(FixtureName, FPR);
 
 #define BENCHMARK_REGISTER_SUPERBLOOM_CPU_ALL(FixtureName) \
     REGISTER_BENCHMARK(FixtureName, Insert);               \

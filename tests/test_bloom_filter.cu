@@ -2,12 +2,12 @@
 #include <cuda/std/span>
 #include <string>
 
-#include <bloom/device_span.cuh>
+#include <cusbf/device_span.cuh>
 
 #include "test_support.cuh"
 
 TEST_F(BloomFilterTest, InsertAndQuerySameSequenceHasNoFalseNegatives) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGTACGT";
     const uint64_t inserted = filter.insertSequence(sequence);
@@ -19,7 +19,7 @@ TEST_F(BloomFilterTest, InsertAndQuerySameSequenceHasNoFalseNegatives) {
 }
 
 TEST_F(BloomFilterTest, InvalidBasesResetForwardWindows) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTNACGTACGTA";
     const auto inserted = filter.insertSequence(sequence);
@@ -31,7 +31,7 @@ TEST_F(BloomFilterTest, InvalidBasesResetForwardWindows) {
 }
 
 TEST_F(BloomFilterTest, RepeatedInsertionIsIdempotent) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGTACGT";
     const auto firstInserted = filter.insertSequence(sequence);
@@ -45,7 +45,7 @@ TEST_F(BloomFilterTest, RepeatedInsertionIsIdempotent) {
 }
 
 TEST_F(BloomFilterTest, ShortSequenceInsertAndQueryReturnEmpty) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const std::string shortSequence = "ACGT";
     const uint64_t inserted = filter.insertSequence(shortSequence);
@@ -56,16 +56,16 @@ TEST_F(BloomFilterTest, ShortSequenceInsertAndQueryReturnEmpty) {
 }
 
 TEST_F(BloomFilterTest, ShortSequenceDeviceOutputBufferRemainsUnchanged) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     thrust::device_vector<char> d_sequence({'A', 'C', 'G', 'T'});
     thrust::device_vector<uint8_t> d_output(1, uint8_t{0xAB});
 
     filter.containsSequenceDevice(
-        bloom::device_span<const char>{
+        cusbf::device_span<const char>{
             thrust::raw_pointer_cast(d_sequence.data()), d_sequence.size()
         },
-        bloom::device_span<uint8_t>{thrust::raw_pointer_cast(d_output.data()), d_output.size()}
+        cusbf::device_span<uint8_t>{thrust::raw_pointer_cast(d_output.data()), d_output.size()}
     );
 
     uint8_t after = 0;
@@ -82,7 +82,7 @@ TEST_F(BloomFilterTest, ShortSequenceDeviceOutputBufferRemainsUnchanged) {
 }
 
 TEST_F(BloomFilterTest, ClearResetsMembership) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGTACGT";
     (void)filter.insertSequence(sequence);
@@ -93,7 +93,7 @@ TEST_F(BloomFilterTest, ClearResetsMembership) {
 }
 
 TEST_F(BloomFilterTest, DeviceOutputMatchesHostContainsResults) {
-    bloom::Filter<TestConfig> filter(1 << 13);
+    cusbf::Filter<TestConfig> filter(1 << 13);
 
     const std::string insertedSequence = "ACGTACGTACGTACGTACGTACGT";
     const std::string querySequence = "TACGTACGTACGTACGTACGTACG";
@@ -106,8 +106,8 @@ TEST_F(BloomFilterTest, DeviceOutputMatchesHostContainsResults) {
     thrust::device_vector<uint8_t> d_output(hostHits.size());
 
     filter.containsSequenceDevice(
-        bloom::device_span<const char>{thrust::raw_pointer_cast(d_query.data()), d_query.size()},
-        bloom::device_span<uint8_t>{thrust::raw_pointer_cast(d_output.data()), d_output.size()}
+        cusbf::device_span<const char>{thrust::raw_pointer_cast(d_query.data()), d_query.size()},
+        cusbf::device_span<uint8_t>{thrust::raw_pointer_cast(d_output.data()), d_output.size()}
     );
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
 
@@ -118,7 +118,7 @@ TEST_F(BloomFilterTest, DeviceOutputMatchesHostContainsResults) {
 }
 
 TEST_F(BloomFilterTest, MultipleInsertionsRemainQueryable) {
-    bloom::Filter<TestConfig> filter(1 << 14);
+    cusbf::Filter<TestConfig> filter(1 << 14);
 
     const std::string sequenceA = "ACGTACGTACGTACGT";
     const std::string sequenceB = "TGCATGCATGCATGCA";
@@ -134,7 +134,7 @@ TEST_F(BloomFilterTest, MultipleInsertionsRemainQueryable) {
 }
 
 TEST_F(BloomFilterTest, LowercaseInsertionMatchesUppercaseQuery) {
-    bloom::Filter<TestConfig> filter(1 << 12);
+    cusbf::Filter<TestConfig> filter(1 << 12);
 
     const std::string lowerSequence = "acgtacgtacgtacgt";
     const std::string upperSequence = "ACGTACGTACGTACGT";
@@ -149,7 +149,7 @@ TEST_F(BloomFilterTest, LowercaseInsertionMatchesUppercaseQuery) {
 }
 
 TEST_F(BloomFilterTest, ProteinAlphabetInsertAndQuerySameSequenceHasNoFalseNegatives) {
-    bloom::Filter<ProteinTestConfig> filter(1 << 12);
+    cusbf::Filter<ProteinTestConfig> filter(1 << 12);
 
     const std::string sequence = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const uint64_t inserted = filter.insertSequence(sequence);
@@ -161,7 +161,7 @@ TEST_F(BloomFilterTest, ProteinAlphabetInsertAndQuerySameSequenceHasNoFalseNegat
 }
 
 TEST_F(BloomFilterTest, ProteinAlphabetLowercaseMatchesUppercaseQuery) {
-    bloom::Filter<ProteinTestConfig> filter(1 << 12);
+    cusbf::Filter<ProteinTestConfig> filter(1 << 12);
 
     const std::string lowerSequence = "abcdefghijklmnopqrstuvwxyz";
     const std::string upperSequence = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -173,7 +173,7 @@ TEST_F(BloomFilterTest, ProteinAlphabetLowercaseMatchesUppercaseQuery) {
 }
 
 TEST_F(BloomFilterTest, ProteinAlphabetInvalidSymbolsResetForwardWindows) {
-    bloom::Filter<ProteinTestConfig> filter(1 << 12);
+    cusbf::Filter<ProteinTestConfig> filter(1 << 12);
 
     const std::string sequence = "ACDE*ACDEFGHI";
     const auto inserted = filter.insertSequence(sequence);
@@ -185,7 +185,7 @@ TEST_F(BloomFilterTest, ProteinAlphabetInvalidSymbolsResetForwardWindows) {
 }
 
 TEST_F(BloomFilterTest, CustomAlphabetUsesExplicitInvalidSentinel) {
-    bloom::Filter<CustomAlphabetTestConfig> filter(1 << 12);
+    cusbf::Filter<CustomAlphabetTestConfig> filter(1 << 12);
 
     const std::string sequence = "xyz!xyz";
     const auto inserted = filter.insertSequence(sequence);
@@ -197,7 +197,7 @@ TEST_F(BloomFilterTest, CustomAlphabetUsesExplicitInvalidSentinel) {
 }
 
 TEST_F(BloomFilterTest, DnaTripletAlphabetInsertAndQuerySameSequenceHasNoFalseNegatives) {
-    bloom::Filter<TripletTestConfig> filter(1 << 12);
+    cusbf::Filter<TripletTestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTTAAACCCGGGTTT";
     const uint64_t inserted = filter.insertSequence(sequence);
@@ -211,7 +211,7 @@ TEST_F(BloomFilterTest, DnaTripletAlphabetInsertAndQuerySameSequenceHasNoFalseNe
 }
 
 TEST_F(BloomFilterTest, DnaTripletAlphabetLowercaseMatchesUppercaseQuery) {
-    bloom::Filter<TripletTestConfig> filter(1 << 12);
+    cusbf::Filter<TripletTestConfig> filter(1 << 12);
 
     const std::string lowerSequence = "acgtacgttaaacccgggttt";
     const std::string upperSequence = "ACGTACGTTAAACCCGGGTTT";
@@ -223,7 +223,7 @@ TEST_F(BloomFilterTest, DnaTripletAlphabetLowercaseMatchesUppercaseQuery) {
 }
 
 TEST_F(BloomFilterTest, DnaTripletAlphabetInvalidTripletsResetForwardWindows) {
-    bloom::Filter<TripletTestConfig> filter(1 << 12);
+    cusbf::Filter<TripletTestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACNNNGGGTTTAAA";
     const auto inserted = filter.insertSequence(sequence);
@@ -235,7 +235,7 @@ TEST_F(BloomFilterTest, DnaTripletAlphabetInvalidTripletsResetForwardWindows) {
 }
 
 TEST_F(BloomFilterTest, DnaTripletAlphabetIgnoresTrailingIncompleteTriplet) {
-    bloom::Filter<TripletTestConfig> filter(1 << 12);
+    cusbf::Filter<TripletTestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTTAAACCCGGGTTTAA";
     const auto inserted = filter.insertSequence(sequence);

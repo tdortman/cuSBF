@@ -6,7 +6,7 @@
 #include <concepts>
 #include <cstdint>
 
-namespace bloom {
+namespace cusbf {
 
 namespace detail {
 
@@ -183,4 +183,4 @@ struct ProteinAlphabet {
     }
 };
 
-}  // namespace bloom
+}  // namespace cusbf

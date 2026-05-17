@@ -14,11 +14,11 @@
 
 #include <unistd.h>
 
-#include <bloom/BloomFilter.cuh>
+#include <cusbf/BloomFilter.cuh>
 
-using TestConfig = bloom::Config<5, 4, 3, 4>;
-using ProteinTestConfig = bloom::Config<5, 4, 3, 4, 256, bloom::ProteinAlphabet>;
-using TripletTestConfig = bloom::Config<3, 2, 2, 4, 256, bloom::DnaTripletAlphabet>;
+using TestConfig = cusbf::Config<5, 4, 3, 4>;
+using ProteinTestConfig = cusbf::Config<5, 4, 3, 4, 256, cusbf::ProteinAlphabet>;
+using TripletTestConfig = cusbf::Config<3, 2, 2, 4, 256, cusbf::DnaTripletAlphabet>;
 
 struct CustomAlphabet {
     static constexpr uint64_t symbolWidth = 1;
@@ -42,13 +42,13 @@ struct CustomAlphabet {
     }
 };
 
-using CustomAlphabetTestConfig = bloom::Config<3, 2, 2, 4, 256, CustomAlphabet>;
+using CustomAlphabetTestConfig = cusbf::Config<3, 2, 2, 4, 256, CustomAlphabet>;
 
 static_assert(TestConfig::symbolBits == 2);
 static_assert(ProteinTestConfig::symbolBits == 5);
 static_assert(TripletTestConfig::symbolBits == 6);
 static_assert(TripletTestConfig::symbolWidth == 3);
-static_assert(bloom::Config<12, 8, 5, 4, 256, bloom::ProteinAlphabet>::k == 12);
+static_assert(cusbf::Config<12, 8, 5, 4, 256, cusbf::ProteinAlphabet>::k == 12);
 static_assert(CustomAlphabetTestConfig::symbolBits == 2);
 static_assert(CustomAlphabet::invalidSymbol != 0xFFu);
 

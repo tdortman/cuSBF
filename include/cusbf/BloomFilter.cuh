@@ -32,10 +32,10 @@
 #include "hashutil.cuh"
 #include "helpers.cuh"
 
-namespace bloom {
+namespace cusbf {
 
 /**
- * @brief Compile-time configuration for a bloom::Filter.
+ * @brief Compile-time configuration for a cusbf::Filter.
  *
  * All filter behaviour (k-mer length, minimizer width, s-mer width, hash
  * count, CUDA block size, and alphabet) is encoded in this struct so that
@@ -320,16 +320,16 @@ __device__ __forceinline__ void atomicOrWord(uint64_t* ptr, uint64_t value) {
 }  // namespace detail
 
 /**
- * @brief GPU-accelerated sectorized Bloom filter.
+ * @brief cuSBF GPU-accelerated sectorized Bloom filter.
  *
- * Stores an in-device Bloom filter divided into numShards 256-bit shards.
+ * Stores an in-device cuSBF divided into numShards 256-bit shards.
  * Each shard is independently addressed by a minimizer-derived hash, and
  * bits within a shard are updated/tested by a set of s-mer-derived hashes.
  *
  * The filter is **not copyable** (device memory ownership). Move construction
  * and assignment are supported.
  *
- * @tparam Config A @ref bloom::Config specialisation.
+ * @tparam Config A @ref cusbf::Config specialisation.
  */
 template <typename Config>
 class Filter {
@@ -341,7 +341,7 @@ class Filter {
      * and the s-mer-derived hashes set/test bits within it.
      *
      * The struct is 32-byte aligned to enable vectorised loads via
-     * @ref bloom::detail::load256BitGlobalNC.
+     * @ref cusbf::detail::load256BitGlobalNC.
      */
     struct alignas(32) Shard {
         static constexpr uint64_t wordCount = Config::blockWordCount;
@@ -576,7 +576,7 @@ class Filter {
             device_span<uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), output.size()},
             stream
         );
-        BLOOM_CUDA_CALL(cudaMemcpyAsync(
+        CUSBF_CUDA_CALL(cudaMemcpyAsync(
             output.data(),
             thrust::raw_pointer_cast(d_resultBuffer_.data()),
             output.size() * sizeof(uint8_t),
@@ -824,7 +824,7 @@ class Filter {
      */
     void stageSequence(cuda::std::span<const char> sequence, cuda::stream_ref stream) const {
         ensureSequenceCapacity(sequence.size());
-        BLOOM_CUDA_CALL(cudaMemcpyAsync(
+        CUSBF_CUDA_CALL(cudaMemcpyAsync(
             thrust::raw_pointer_cast(d_sequence_.data()),
             sequence.data(),
             sequence.size_bytes(),
@@ -850,7 +850,7 @@ class Filter {
                 detail::SequenceKmerInput<Config>{d_sequence},
                 device_span<Shard>{thrust::raw_pointer_cast(d_shards_.data()), numShards_}
             );
-        BLOOM_CUDA_CALL(cudaGetLastError());
+        CUSBF_CUDA_CALL(cudaGetLastError());
     }
 
     /**
@@ -875,7 +875,7 @@ class Filter {
                 device_span<const Shard>{thrust::raw_pointer_cast(d_shards_.data()), numShards_},
                 d_output
             );
-        BLOOM_CUDA_CALL(cudaGetLastError());
+        CUSBF_CUDA_CALL(cudaGetLastError());
     }
 };
 
@@ -1294,4 +1294,4 @@ __global__ void insertSequenceKmersKernel(
 
 }  // namespace detail
 
-}  // namespace bloom
+}  // namespace cusbf

@@ -9,7 +9,7 @@
 #include <string>
 #include <string_view>
 
-#include <bloom/BloomFilter.cuh>
+#include <cusbf/BloomFilter.cuh>
 
 std::string generateRandomDNA(uint64_t length, uint32_t seed) {
     static constexpr char bases[] = {'A', 'C', 'G', 'T'};
@@ -82,7 +82,7 @@ int runDemo(
     bool useRawSequence,
     bool useGeneratedFastx
 ) {
-    bloom::Filter<Config> filter(filterBits);
+    cusbf::Filter<Config> filter(filterBits);
 
     uint64_t inserted = 0;
     uint64_t queryKmers = 0;
@@ -157,10 +157,10 @@ int runDemo(
 }
 
 int main(int argc, char** argv) {
-    using Config = bloom::Config<31, 28, 16, 4, 256>;
-    using ProteinConfig = bloom::Config<12, 10, 6, 4, 256, bloom::ProteinAlphabet>;
+    using Config = cusbf::Config<31, 28, 16, 4, 256>;
+    using ProteinConfig = cusbf::Config<12, 10, 6, 4, 256, cusbf::ProteinAlphabet>;
 
-    CLI::App app{"GPU SuperBloom demo"};
+    CLI::App app{"cuSBF demo"};
 
     std::string sequence;
     std::string query;
@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
         ->check(CLI::IsMember({"dna", "protein"}))
         ->default_val(mode);
     app.add_option(
-           "--filter-bits", filterBits, "Total bloom-filter bits before power-of-two rounding"
+           "--filter-bits", filterBits, "Total cuSBF bits before power-of-two rounding"
     )
         ->default_val(filterBits);
 

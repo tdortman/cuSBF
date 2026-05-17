@@ -12,7 +12,7 @@
 
 #include <zlib.h>
 
-namespace bloom::detail {
+namespace cusbf::detail {
 
 class GzStreambuf : public std::streambuf {
    public:
@@ -77,4 +77,4 @@ inline bool isGzipFile(std::string_view path) {
     return n == 2 && magic[0] == 0x1F && magic[1] == 0x8B;
 }
 
-}  // namespace bloom::detail
+}  // namespace cusbf::detail

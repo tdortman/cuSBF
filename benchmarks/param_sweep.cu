@@ -12,9 +12,9 @@
 #include <string>
 #include <vector>
 
-#include <bloom/BloomFilter.cuh>
-#include <bloom/device_span.cuh>
-#include <bloom/helpers.cuh>
+#include <cusbf/BloomFilter.cuh>
+#include <cusbf/device_span.cuh>
+#include <cusbf/helpers.cuh>
 
 #include "benchmark_common.cuh"
 
@@ -24,7 +24,7 @@ namespace bm = benchmark;
     #define PARAM_SWEEP_K 31
 #endif
 #ifndef PARAM_SWEEP_ALPHABET
-    #define PARAM_SWEEP_ALPHABET bloom::DnaAlphabet
+    #define PARAM_SWEEP_ALPHABET cusbf::DnaAlphabet
 #endif
 
 struct FastxInputData {
@@ -49,9 +49,9 @@ static std::string g_queryFastxPath;
 static uint64_t g_filterBits = 0;
 
 static std::vector<char> readFastxConcatenated(std::string_view path) {
-    auto input = bloom::detail::openFastxFile(path);
-    bloom::detail::FastxReader reader(*input, path);
-    bloom::detail::FastxRecord record;
+    auto input = cusbf::detail::openFastxFile(path);
+    cusbf::detail::FastxReader reader(*input, path);
+    cusbf::detail::FastxRecord record;
 
     std::vector<char> sequence;
     bool firstRecord = true;
@@ -86,7 +86,7 @@ static void prepareFastxData() {
     }
 
     g_fastxData->d_insertSequence.resize(hostInsert.size());
-    BLOOM_CUDA_CALL(cudaMemcpy(
+    CUSBF_CUDA_CALL(cudaMemcpy(
         thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
         hostInsert.data(),
         hostInsert.size(),
@@ -103,7 +103,7 @@ static void prepareFastxData() {
             std::exit(1);
         }
         g_fastxData->d_querySequence.resize(hostQuery.size());
-        BLOOM_CUDA_CALL(cudaMemcpy(
+        CUSBF_CUDA_CALL(cudaMemcpy(
             thrust::raw_pointer_cast(g_fastxData->d_querySequence.data()),
             hostQuery.data(),
             hostQuery.size(),
@@ -138,7 +138,7 @@ static void prepareFastxData() {
         g_filterBits = 256;
     }
 
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
 
 template <typename Config>
@@ -149,7 +149,7 @@ class ShSweepFixture : public bm::Fixture {
    public:
     void SetUp(const bm::State& /*state*/) override {
         prepareFastxData();
-        filter = std::make_unique<bloom::Filter<Config>>(g_filterBits);
+        filter = std::make_unique<cusbf::Filter<Config>>(g_filterBits);
         filterMemory = filter->filterBits() / 8;
         d_output.resize(std::max(g_fastxData->queryKmers, g_fastxData->fprKmers));
     }
@@ -186,7 +186,7 @@ class ShSweepFixture : public bm::Fixture {
         state.counters["false_positives"] = 0.0;
     }
 
-    std::unique_ptr<bloom::Filter<Config>> filter;
+    std::unique_ptr<cusbf::Filter<Config>> filter;
     uint64_t filterMemory = 0;
     thrust::device_vector<uint8_t> d_output;
     benchmark_common::GPUTimer timer;
@@ -197,11 +197,11 @@ template <typename Fixture>
 void runShSweepInsert(Fixture& fixture, benchmark::State& state) {
     for (auto _ : state) {
         fixture.filter->clear();
-        BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+        CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fixture.timer.start();
         benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
-            bloom::device_span<const char>{
+            cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
                 g_fastxData->d_insertSequence.size()
             }
@@ -216,21 +216,21 @@ template <typename Fixture>
 void runShSweepQuery(Fixture& fixture, benchmark::State& state) {
     fixture.filter->clear();
     benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
-        bloom::device_span<const char>{
+        cusbf::device_span<const char>{
             thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
             g_fastxData->d_insertSequence.size()
         }
     ));
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fixture.timer.start();
         fixture.filter->containsSequenceDevice(
-            bloom::device_span<const char>{
+            cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(g_fastxData->d_querySequence.data()),
                 g_fastxData->d_querySequence.size()
             },
-            bloom::device_span<uint8_t>{
+            cusbf::device_span<uint8_t>{
                 thrust::raw_pointer_cast(fixture.d_output.data()), fixture.d_output.size()
             }
         );
@@ -245,21 +245,21 @@ template <typename Fixture>
 void runShSweepFpr(Fixture& fixture, benchmark::State& state) {
     fixture.filter->clear();
     benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
-        bloom::device_span<const char>{
+        cusbf::device_span<const char>{
             thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
             g_fastxData->d_insertSequence.size()
         }
     ));
-    BLOOM_CUDA_CALL(cudaDeviceSynchronize());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fixture.timer.start();
         fixture.filter->containsSequenceDevice(
-            bloom::device_span<const char>{
+            cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(g_fastxData->d_fprSequence.data()),
                 g_fastxData->d_fprSequence.size()
             },
-            bloom::device_span<uint8_t>{
+            cusbf::device_span<uint8_t>{
                 thrust::raw_pointer_cast(fixture.d_output.data()), g_fastxData->fprKmers
             }
         );
@@ -280,7 +280,7 @@ void runShSweepFpr(Fixture& fixture, benchmark::State& state) {
 // Macros for config / fixture / benchmark definition and registration
 #define PARAM_SWEEP_DEFINE_CONFIG_AND_FIXTURE(K, S, M, H)     \
     using BENCHMARK_SUPERBLOOM_CONFIG_SYMBOL(K, S, M, H) =    \
-        bloom::Config<K, S, M, H, 256, PARAM_SWEEP_ALPHABET>; \
+        cusbf::Config<K, S, M, H, 256, PARAM_SWEEP_ALPHABET>; \
     using BENCHMARK_SUPERBLOOM_FIXTURE_SYMBOL(K, S, M, H) =   \
         ShSweepFixture<BENCHMARK_SUPERBLOOM_CONFIG_SYMBOL(K, S, M, H)>;
 

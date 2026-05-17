@@ -44,7 +44,7 @@
  *   - xxHash source repository: https://github.com/Cyan4973/xxHash
  */
 
-namespace bloom::detail::xxhash {
+namespace cusbf::detail::xxhash {
 
 constexpr uint64_t PRIME64_1 = 11400714785074694791ULL;
 constexpr uint64_t PRIME64_2 = 14029467366897019727ULL;
@@ -176,9 +176,9 @@ __host__ __device__ inline uint64_t xxhash64(const T& key, uint64_t seed = 0) {
     return finalize(h64);
 }
 
-}  // namespace bloom::detail::xxhash
+}  // namespace cusbf::detail::xxhash
 
-namespace bloom::detail {
+namespace cusbf::detail {
 
 /**
  * @brief Fast 64-bit integer hash (non-cryptographic).
@@ -210,4 +210,4 @@ constexpr __host__ __device__ __forceinline__ uint64_t minimizerHash64(uint64_t 
     return key * 0x9E3779B97F4A7C15ULL;
 }
 
-}  // namespace bloom::detail
+}  // namespace cusbf::detail

@@ -4,7 +4,7 @@ cuco_dep = subproject('cuco').get_variable('cuco_dep')
 
 cuckoogpu_dep = subproject('cuckoogpu').get_variable('cuckoogpu_dep')
 
-bench_deps = [benchmark_dep, bloom_dep]
+bench_deps = [benchmark_dep, cusbf_dep]
 
 superbloom_cpu_dep = subproject('superbloom-cpu').get_variable('superbloom_cpu_dep')
 
@@ -27,14 +27,14 @@ if get_option('param_sweep').enabled()
         sweep_extra_args = [
             '-DPARAM_SWEEP_PROTEIN',
             '-DPARAM_SWEEP_K=12',
-            '-DPARAM_SWEEP_ALPHABET=bloom::ProteinAlphabet',
+            '-DPARAM_SWEEP_ALPHABET=cusbf::ProteinAlphabet',
         ]
     else
         s_values = [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
         m_values = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 31]
         sweep_extra_args = [
             '-DPARAM_SWEEP_K=31',
-            '-DPARAM_SWEEP_ALPHABET=bloom::DnaAlphabet',
+            '-DPARAM_SWEEP_ALPHABET=cusbf::DnaAlphabet',
         ]
     endif
     num_m = m_values.length()

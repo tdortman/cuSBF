@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace bloom {
+namespace cusbf {
 
 /**
  * @brief Exception thrown on CUDA runtime errors.
@@ -32,9 +32,9 @@ class CudaError : public std::runtime_error {
     cudaError_t code_;
 };
 
-}  // namespace bloom
+}  // namespace cusbf
 
-namespace bloom::detail {
+namespace cusbf::detail {
 
 #if __CUDA_ARCH__ >= 1000
 
@@ -127,15 +127,15 @@ __device__ __forceinline__ uint64_t warpReduceOr(uint32_t peers, uint64_t value)
 
 /**
  * @brief Macro for checking CUDA errors.
- * Throws bloom::CudaError on failure.
+ * Throws cusbf::CudaError on failure.
  */
-#define BLOOM_CUDA_CALL(err)                              \
+#define CUSBF_CUDA_CALL(err)                              \
     do {                                                  \
         cudaError_t err_ = (err);                         \
         if (err_ == cudaSuccess) [[likely]] {             \
             break;                                        \
         }                                                 \
-        throw bloom::CudaError(err_, __FILE__, __LINE__); \
+        throw cusbf::CudaError(err_, __FILE__, __LINE__); \
     } while (0)
 
 /**
@@ -163,4 +163,4 @@ uint64_t maxOccupancyGridSize(int32_t blockSize, Kernel kernel, uint64_t dynamic
     return maxActiveBlocksPerSM * numSM;
 }
 
-}  // namespace bloom::detail
+}  // namespace cusbf::detail

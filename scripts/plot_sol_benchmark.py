@@ -74,10 +74,10 @@ def main(
     }
 
     if cusbf_only:
-        subset = df[df["filter"] == "superbloom"]
+        subset = df[df["filter"] == "cusbf"]
         if subset.empty:
             typer.secho(
-                "No cuSBF/superbloom rows found in the CSV.",
+                "No cuSBF/cusbf rows found in the CSV.",
                 fg=typer.colors.RED,
                 err=True,
             )
@@ -88,7 +88,7 @@ def main(
         ]
         if not operations:
             typer.secho(
-                "No insert/query rows found for cuSBF/superbloom.",
+                "No insert/query rows found for cuSBF/cusbf.",
                 fg=typer.colors.RED,
                 err=True,
             )
@@ -288,7 +288,7 @@ def main(
         if metric_col not in df.columns:
             continue
 
-        filters = ["superbloom", "cucobloom", "cuckoogpu"]
+        filters = ["cusbf", "cucobloom", "cuckoogpu"]
         available_filters = [f for f in filters if f in df["filter"].unique()]
 
         fig, axes = plt.subplots(2, 2, figsize=(14, 10), sharex=False, sharey=False)

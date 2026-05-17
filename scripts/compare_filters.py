@@ -78,7 +78,7 @@ def main(
         if parsed is None:
             continue
         filter_key, operation, size = parsed
-        # Fixture names may embed tuning params (e.g. superbloom_k31_...);
+        # Fixture names may embed tuning params (e.g. cusbf_k31_...);
         # normalize to the canonical filter family for styling/grouping.
         filter_key = filter_key.split("_", 1)[0]
         benchmark_key = (filter_key, operation)
