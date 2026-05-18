@@ -3,7 +3,6 @@
 #include <cuda/__cmath/ceil_div.h>
 #include <cuda_runtime.h>
 
-#include <cuda/algorithm>
 #include <cuda/std/bit>
 #include <cuda/std/span>
 #include <cuda/stream>

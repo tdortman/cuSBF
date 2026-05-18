@@ -45,7 +45,7 @@ Benchmarks can be reproduced with:
 
 ## Requirements
 
-- CUDA Toolkit (>= 12.9, tested with 13.2)
+- CUDA Toolkit >= 13.1
 - C++20 compatible host compiler
 - Meson build system
 - NVIDIA GPU with compute capability 8.0+ (Ampere, Lovelace, Hopper, Blackwell)
