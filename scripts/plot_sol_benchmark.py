@@ -25,6 +25,8 @@ METRICS = [
     ("dram_throughput", "DRAM"),
 ]
 
+X_AXIS_LABEL = "Target Capacity [k-mers]"
+
 
 @app.command()
 def main(
@@ -135,7 +137,7 @@ def main(
                 )
 
             ax.set_title(operation.capitalize(), fontweight="bold", pad=3)
-            ax.set_xlabel("Filter Size [k-mers]", fontweight="bold")
+            ax.set_xlabel(X_AXIS_LABEL, fontweight="bold")
             ax.set_ylabel("Throughput (% of Peak)", fontweight="bold")
             ax.set_xscale("log", base=2)
             ax.set_ylim(0, 105)
@@ -189,7 +191,7 @@ def main(
                 )
 
             ax.set_xlabel(
-                "Filter Capacity [slots]",
+                X_AXIS_LABEL,
                 fontsize=pu.AXIS_LABEL_FONT_SIZE,
                 fontweight="bold",
             )
@@ -249,7 +251,7 @@ def main(
                 )
 
             ax.set_xlabel(
-                "Filter Capacity [slots]",
+                X_AXIS_LABEL,
                 fontsize=pu.AXIS_LABEL_FONT_SIZE,
                 fontweight="bold",
             )
@@ -339,7 +341,7 @@ def main(
 
         # Common axis labels
         fig.supxlabel(
-            "Input Size [k-mers]",
+            X_AXIS_LABEL,
             fontsize=pu.AXIS_LABEL_FONT_SIZE,
             fontweight="bold",
         )
