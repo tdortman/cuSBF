@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <cusbf/gzstreambuf.hpp>
 
@@ -26,6 +27,21 @@ struct FastxQueryReport {
     uint64_t queriedBases{};
     uint64_t queriedKmers{};
     uint64_t positiveKmers{};
+};
+
+/// @brief Detailed per-record query results returned by Filter FASTX detail APIs.
+struct FastxDetailedQueryRecord {
+    uint64_t recordIndex{};
+    uint64_t queriedBases{};
+    uint64_t queriedKmers{};
+    uint64_t positiveKmers{};
+    std::vector<uint8_t> hits;
+};
+
+/// @brief Aggregate and per-record results returned by Filter FASTX detail APIs.
+struct FastxDetailedQueryReport {
+    FastxQueryReport summary{};
+    std::vector<FastxDetailedQueryRecord> records;
 };
 
 namespace detail {

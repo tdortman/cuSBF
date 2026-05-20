@@ -30,11 +30,11 @@ Benchmarks (`Config<31, 28, 16, 4>`) comparing cuSBF against NVIDIA's [cuco](htt
 
 The findere scheme (s-mer width) provides strong false-positive reduction at equivalent memory. For `Config<31, 28, 16, 4>` on ~4.6M inserted k-mers queried against 10⁹ random k-mers:
 
-| Bits/k-mer | cuSBF FPR       | cuco Bloom FPR |
-| ---------- | --------------- | -------------- |
-| 58         | 0.0035%         | 0.064%         |
-| 116        | 0.00036%        | 0.017%         |
-| 231        | 0.000092%       | 0.0054%        |
+| Bits/k-mer | cuSBF FPR | cuco Bloom FPR |
+| ---------- | --------- | -------------- |
+| 58         | 0.0035%   | 0.064%         |
+| 116        | 0.00036%  | 0.017%         |
+| 231        | 0.000092% | 0.0054%        |
 
 Benchmarks can be reproduced with:
 
@@ -122,9 +122,14 @@ filter.containsSequenceDevice(
     cusbf::device_span<uint8_t>(d_results)
 );
 
-// FASTA/FASTQ file insertion and query
+// FASTA/FASTQ file insertion and aggregate query (chunked internally for large inputs)
 filter.insertFastxFile("reference.fasta");
-auto reports = filter.queryFastxFile("queries.fastq");
+auto summary = filter.queryFastxFile("queries.fastq");
+
+// Detailed FASTX query keeps per-record hit vectors in source order
+auto detailed = filter.queryFastxFileDetailed("queries.fastq");
+// detailed.summary mirrors queryFastxFile(...)
+// detailed.records[i].hits contains one bool per k-mer window for record i
 
 // Inspect filter state
 double load = filter.loadFactor();  // fraction of set bits

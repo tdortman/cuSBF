@@ -625,6 +625,40 @@ class Filter {
     }
 
     /**
+     * @brief Queries all k-mers from a FASTA/FASTQ input stream via chunked streaming and
+     * preserves per-record hit vectors.
+     *
+     * The returned report keeps aggregate counts plus one detailed record result in source
+     * order. Each detailed hit vector contains one byte per k-mer window: 1 = present,
+     * 0 = absent. Invalid-symbol windows remain in the vector as 0 and are excluded from
+     * queriedKmers.
+     *
+     * @see queryFastx
+     */
+    [[nodiscard]] FastxDetailedQueryReport queryFastxDetailed(
+        std::istream& input,
+        double fillFraction = 0.7,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        return queryFastxDetailedStream(input, "<stream>", fillFraction, stream);
+    }
+
+    /**
+     * @brief Queries all k-mers from a FASTA/FASTQ file via chunked streaming and
+     * preserves per-record hit vectors.
+     *
+     * @see queryFastxDetailed
+     */
+    [[nodiscard]] FastxDetailedQueryReport queryFastxFileDetailed(
+        std::string_view path,
+        double fillFraction = 0.7,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        auto input = detail::openFastxFile(path);
+        return queryFastxDetailedStream(*input, path, fillFraction, stream);
+    }
+
+    /**
      * @brief Resets all filter bits to zero and synchronises the stream.
      *
      * @param stream CUDA stream to use.
@@ -672,8 +706,10 @@ class Filter {
 
    private:
     struct FastxRecordRange {
+        uint64_t recordIndex{};
         uint64_t offset{};
         uint64_t size{};
+        uint64_t validKmers{};
     };
 
     uint64_t numShards_{};
@@ -741,14 +777,40 @@ class Filter {
     static void appendFastxRecordWithRange(
         std::string& sequence,
         std::vector<FastxRecordRange>& ranges,
-        std::string_view recordSequence
+        std::string_view recordSequence,
+        uint64_t recordIndex,
+        uint64_t validKmers
     ) {
         if (!sequence.empty()) {
             appendFastxBoundary(sequence);
         }
         const uint64_t offset = recordSymbolCount(sequence.size());
         sequence.append(recordSequence);
-        ranges.push_back(FastxRecordRange{offset, recordSequence.size()});
+        ranges.push_back(FastxRecordRange{recordIndex, offset, recordSequence.size(), validKmers});
+    }
+
+    template <typename Consumer>
+    void processFastxQueryChunk(
+        std::string_view sequence,
+        const std::vector<FastxRecordRange>& ranges,
+        FastxQueryReport& report,
+        Consumer&& consume,
+        cuda::stream_ref stream
+    ) const {
+        const auto hits = containsSequence(sequence, stream);
+        for (const FastxRecordRange& range : ranges) {
+            const uint64_t kmers = recordKmerCount(range.size);
+            if (kmers == 0) {
+                consume(range, hits, 0, 0);
+                continue;
+            }
+
+            const auto begin = hits.begin() + static_cast<ptrdiff_t>(range.offset);
+            const auto end = begin + static_cast<ptrdiff_t>(kmers);
+            const auto positiveKmers = static_cast<uint64_t>(std::count(begin, end, uint8_t{1}));
+            report.positiveKmers += positiveKmers;
+            consume(range, hits, kmers, positiveKmers);
+        }
     }
 
     /// @brief Internal implementation shared by insertFastx() and insertFastxFile().
@@ -808,43 +870,132 @@ class Filter {
         std::string sequence;
         sequence.reserve(chunkTargetBytes);
         std::vector<FastxRecordRange> ranges;
+        uint64_t recordIndex = 0;
 
         while (reader.nextRecord(record)) {
+            const uint64_t validKmers = validRecordKmerCount(record.sequence);
             ++report.recordsQueried;
             report.queriedBases += record.sequence.size();
-            report.queriedKmers += validRecordKmerCount(record.sequence);
-            appendFastxRecordWithRange(sequence, ranges, record.sequence);
+            report.queriedKmers += validKmers;
+            appendFastxRecordWithRange(sequence, ranges, record.sequence, recordIndex, validKmers);
+            ++recordIndex;
 
             if (sequence.size() >= chunkTargetBytes) {
-                const auto hits = containsSequence(sequence, stream);
-                for (const FastxRecordRange range : ranges) {
-                    const uint64_t kmers = recordKmerCount(range.size);
-                    if (kmers == 0) {
-                        continue;
-                    }
-                    report.positiveKmers += std::count(
-                        hits.begin() + static_cast<ptrdiff_t>(range.offset),
-                        hits.begin() + static_cast<ptrdiff_t>(range.offset + kmers),
-                        uint8_t{1}
-                    );
-                }
+                processFastxQueryChunk(
+                    sequence,
+                    ranges,
+                    report,
+                    [](const auto&, const auto&, uint64_t, uint64_t) {},
+                    stream
+                );
                 sequence.clear();
                 ranges.clear();
             }
         }
 
         if (!sequence.empty()) {
-            const auto hits = containsSequence(sequence, stream);
-            for (const FastxRecordRange range : ranges) {
-                const uint64_t kmers = recordKmerCount(range.size);
-                if (kmers == 0)
-                    continue;
-                report.positiveKmers += std::count(
-                    hits.begin() + static_cast<ptrdiff_t>(range.offset),
-                    hits.begin() + static_cast<ptrdiff_t>(range.offset + kmers),
-                    uint8_t{1}
+            processFastxQueryChunk(
+                sequence,
+                ranges,
+                report,
+                [](const auto&, const auto&, uint64_t, uint64_t) {},
+                stream
+            );
+        }
+        return report;
+    }
+
+    /// @brief Internal implementation shared by queryFastxDetailed() and queryFastxFileDetailed().
+    [[nodiscard]] FastxDetailedQueryReport queryFastxDetailedStream(
+        std::istream& input,
+        std::string_view sourceName,
+        double fillFraction,
+        cuda::stream_ref stream
+    ) const {
+        detail::FastxReader reader(input, sourceName);
+        detail::FastxRecord record;
+        FastxDetailedQueryReport report;
+
+        size_t freeBytes = 0;
+        size_t totalBytes = 0;
+        CUSBF_CUDA_CALL(cudaMemGetInfo(&freeBytes, &totalBytes));
+        const auto chunkTargetBytes =
+            static_cast<size_t>(static_cast<double>(freeBytes) * fillFraction);
+
+        std::string sequence;
+        sequence.reserve(chunkTargetBytes);
+        std::vector<FastxRecordRange> ranges;
+        uint64_t recordIndex = 0;
+
+        while (reader.nextRecord(record)) {
+            const uint64_t validKmers = validRecordKmerCount(record.sequence);
+            ++report.summary.recordsQueried;
+            report.summary.queriedBases += record.sequence.size();
+            report.summary.queriedKmers += validKmers;
+            appendFastxRecordWithRange(sequence, ranges, record.sequence, recordIndex, validKmers);
+            ++recordIndex;
+
+            if (sequence.size() >= chunkTargetBytes) {
+                processFastxQueryChunk(
+                    sequence,
+                    ranges,
+                    report.summary,
+                    [&report](
+                        const FastxRecordRange& range,
+                        const std::vector<uint8_t>& hits,
+                        uint64_t kmers,
+                        uint64_t positiveKmers
+                    ) {
+                        std::vector<uint8_t> recordHits;
+                        if (kmers != 0) {
+                            const auto begin = hits.begin() + static_cast<ptrdiff_t>(range.offset);
+                            recordHits.assign(begin, begin + static_cast<ptrdiff_t>(kmers));
+                        }
+                        report.records.push_back(
+                            FastxDetailedQueryRecord{
+                                range.recordIndex,
+                                range.size,
+                                range.validKmers,
+                                positiveKmers,
+                                std::move(recordHits),
+                            }
+                        );
+                    },
+                    stream
                 );
+                sequence.clear();
+                ranges.clear();
             }
+        }
+
+        if (!sequence.empty()) {
+            processFastxQueryChunk(
+                sequence,
+                ranges,
+                report.summary,
+                [&report](
+                    const FastxRecordRange& range,
+                    const std::vector<uint8_t>& hits,
+                    uint64_t kmers,
+                    uint64_t positiveKmers
+                ) {
+                    std::vector<uint8_t> recordHits;
+                    if (kmers != 0) {
+                        const auto begin = hits.begin() + static_cast<ptrdiff_t>(range.offset);
+                        recordHits.assign(begin, begin + static_cast<ptrdiff_t>(kmers));
+                    }
+                    report.records.push_back(
+                        FastxDetailedQueryRecord{
+                            range.recordIndex,
+                            range.size,
+                            range.validKmers,
+                            positiveKmers,
+                            std::move(recordHits),
+                        }
+                    );
+                },
+                stream
+            );
         }
         return report;
     }
