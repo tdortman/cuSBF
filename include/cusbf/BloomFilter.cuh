@@ -140,6 +140,8 @@ struct BitwiseOr {
 template <typename Config>
 struct SequenceKmerInput;
 
+inline constexpr uint32_t kContainsSequenceStride = 4;
+
 template <typename Config>
 __global__ void containsSequenceKmersKernel(
     SequenceKmerInput<Config> input,
@@ -346,6 +348,41 @@ class Filter {
         std::string sequence;
         std::vector<PreparedRecordRange> records;
     };
+    struct FastxChunkAssembly {
+        explicit FastxChunkAssembly(size_t reservedBytes) {
+            sequence.reserve(reservedBytes);
+        }
+
+        void appendRecord(std::string_view recordSequence) {
+            ranges.push_back(
+                RecordRange{
+                    static_cast<uint64_t>(sequence.size()),
+                    static_cast<uint64_t>(recordSequence.size()),
+                }
+            );
+            sequence.append(recordSequence);
+        }
+
+        [[nodiscard]] bool empty() const {
+            return ranges.empty();
+        }
+
+        [[nodiscard]] bool reachedTarget(size_t targetBytes) const {
+            return sequence.size() >= targetBytes;
+        }
+
+        [[nodiscard]] uint64_t recordCount() const {
+            return static_cast<uint64_t>(ranges.size());
+        }
+
+        void clear() {
+            sequence.clear();
+            ranges.clear();
+        }
+
+        std::string sequence;
+        std::vector<RecordRange> ranges;
+    };
 
    public:
     /**
@@ -485,11 +522,8 @@ class Filter {
         }
 
         const uint64_t totalKmers = recordKmerCount(sequence.size());
-        stageSequence({sequence.data(), sequence.size()}, stream);
-        launchInsertSequence(
-            device_span<const char>{thrust::raw_pointer_cast(d_sequence_.data()), sequence.size()},
-            stream
-        );
+        const auto d_sequence = stagedSequenceView({sequence.data(), sequence.size()}, stream);
+        launchInsertSequence(d_sequence, stream);
         stream.sync();
         return totalKmers;
     }
@@ -508,11 +542,11 @@ class Filter {
         device_span<const char> d_sequence,
         cuda::stream_ref stream = cudaStream_t{}
     ) {
-        if (detail::SequenceKmerInput<Config>{d_sequence}.kmerCount() == 0) {
+        const uint64_t totalKmers = sequenceKmerCount(d_sequence);
+        if (totalKmers == 0) {
             return 0;
         }
 
-        const uint64_t totalKmers = detail::SequenceKmerInput<Config>{d_sequence}.kmerCount();
         launchInsertSequence(d_sequence, stream);
         return totalKmers;
     }
@@ -595,7 +629,7 @@ class Filter {
         device_span<uint8_t> d_output,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
-        if (detail::SequenceKmerInput<Config>{d_sequence}.kmerCount() == 0) {
+        if (sequenceKmerCount(d_sequence) == 0) {
             return;
         }
 
@@ -621,10 +655,10 @@ class Filter {
 
         std::vector<uint8_t> output(recordKmerCount(sequence.size()));
 
-        stageSequence({sequence.data(), sequence.size()}, stream);
+        const auto d_sequence = stagedSequenceView({sequence.data(), sequence.size()}, stream);
         ensureResultCapacity(output.size());
         launchContainsSequence(
-            device_span<const char>{thrust::raw_pointer_cast(d_sequence_.data()), sequence.size()},
+            d_sequence,
             device_span<uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), output.size()},
             stream
         );
@@ -828,7 +862,6 @@ class Filter {
     }
 
    private:
-
     uint64_t numShards_{};
     uint64_t filterBits_{};
 
@@ -918,13 +951,15 @@ class Filter {
         }
         const uint64_t outputOffset = recordSymbolCount(output.size());
         output.append(recordSequence);
-        ranges.push_back(PreparedRecordRange{
-            recordIndex,
-            inputOffset,
-            outputOffset,
-            static_cast<uint64_t>(recordSequence.size()),
-            validRecordKmerCount(recordSequence),
-        });
+        ranges.push_back(
+            PreparedRecordRange{
+                recordIndex,
+                inputOffset,
+                outputOffset,
+                static_cast<uint64_t>(recordSequence.size()),
+                validRecordKmerCount(recordSequence),
+            }
+        );
     }
 
     [[nodiscard]] static PreparedRecordBatch prepareRecordBatch(RecordBatchView batch) {
@@ -949,10 +984,8 @@ class Filter {
         return prepared;
     }
 
-    [[nodiscard]] static RecordBatchView makeBatchView(
-        const std::string& sequence,
-        const std::vector<RecordRange>& ranges
-    ) {
+    [[nodiscard]] static RecordBatchView
+    makeBatchView(const std::string& sequence, const std::vector<RecordRange>& ranges) {
         return RecordBatchView{
             sequence,
             cuda::std::span<const RecordRange>{ranges.data(), ranges.size()},
@@ -972,6 +1005,13 @@ class Filter {
         total.positiveKmers += chunk.positiveKmers;
     }
 
+    [[nodiscard]] static size_t fastxChunkTargetBytes(double fillFraction) {
+        size_t freeBytes = 0;
+        size_t totalBytes = 0;
+        CUSBF_CUDA_CALL(cudaMemGetInfo(&freeBytes, &totalBytes));
+        return static_cast<size_t>(static_cast<double>(freeBytes) * fillFraction);
+    }
+
     template <typename Consumer>
     [[nodiscard]] FastxQueryReport queryPreparedRecordBatch(
         const PreparedRecordBatch& batch,
@@ -989,33 +1029,39 @@ class Filter {
         const auto hits = containsSequence(batch.sequence, stream);
         for (const PreparedRecordRange& record : batch.records) {
             const uint64_t kmers = recordKmerCount(record.size);
-            const auto sequence =
-                inputSequence.substr(static_cast<size_t>(record.inputOffset), static_cast<size_t>(record.size));
+            const auto sequence = inputSequence.substr(
+                static_cast<size_t>(record.inputOffset), static_cast<size_t>(record.size)
+            );
             if (kmers == 0) {
-                consume(RecordQueryView{
-                    record.recordIndex,
-                    sequence,
-                    record.size,
-                    record.validKmers,
-                    0,
-                    cuda::std::span<const uint8_t>{},
-                });
+                consume(
+                    RecordQueryView{
+                        record.recordIndex,
+                        sequence,
+                        record.size,
+                        record.validKmers,
+                        0,
+                        cuda::std::span<const uint8_t>{},
+                    }
+                );
                 continue;
             }
 
             const auto* hitBegin = hits.data() + static_cast<ptrdiff_t>(record.outputOffset);
-            const auto hitSpan = cuda::std::span<const uint8_t>{hitBegin, static_cast<size_t>(kmers)};
+            const auto hitSpan =
+                cuda::std::span<const uint8_t>{hitBegin, static_cast<size_t>(kmers)};
             const auto positiveKmers =
                 static_cast<uint64_t>(std::count(hitSpan.begin(), hitSpan.end(), uint8_t{1}));
             report.positiveKmers += positiveKmers;
-            consume(RecordQueryView{
-                record.recordIndex,
-                sequence,
-                record.size,
-                record.validKmers,
-                positiveKmers,
-                hitSpan,
-            });
+            consume(
+                RecordQueryView{
+                    record.recordIndex,
+                    sequence,
+                    record.size,
+                    record.validKmers,
+                    positiveKmers,
+                    hitSpan,
+                }
+            );
         }
         return report;
     }
@@ -1031,31 +1077,22 @@ class Filter {
         detail::FastxRecord record;
         FastxInsertReport report;
 
-        size_t freeBytes = 0;
-        size_t totalBytes = 0;
-        CUSBF_CUDA_CALL(cudaMemGetInfo(&freeBytes, &totalBytes));
-        const auto chunkTargetBytes =
-            static_cast<size_t>(static_cast<double>(freeBytes) * fillFraction);
+        const auto chunkTargetBytes = fastxChunkTargetBytes(fillFraction);
+        FastxChunkAssembly chunk(chunkTargetBytes);
 
-        std::string sequence;
-        sequence.reserve(chunkTargetBytes);
-        std::vector<RecordRange> ranges;
         auto flush = [&]() {
-            if (ranges.empty()) {
+            if (chunk.empty()) {
                 return;
             }
-            accumulateInsertReport(report, insertRecordBatch(makeBatchView(sequence, ranges), stream));
-            sequence.clear();
-            ranges.clear();
+            accumulateInsertReport(
+                report, insertRecordBatch(makeBatchView(chunk.sequence, chunk.ranges), stream)
+            );
+            chunk.clear();
         };
 
         while (reader.nextRecord(record)) {
-            ranges.push_back(RecordRange{
-                static_cast<uint64_t>(sequence.size()),
-                static_cast<uint64_t>(record.sequence.size()),
-            });
-            sequence.append(record.sequence);
-            if (sequence.size() >= chunkTargetBytes) {
+            chunk.appendRecord(record.sequence);
+            if (chunk.reachedTarget(chunkTargetBytes)) {
                 flush();
             }
         }
@@ -1088,54 +1125,44 @@ class Filter {
         detail::FastxRecord record;
         FastxQueryReport report;
 
-        size_t freeBytes = 0;
-        size_t totalBytes = 0;
-        CUSBF_CUDA_CALL(cudaMemGetInfo(&freeBytes, &totalBytes));
-        const auto chunkTargetBytes =
-            static_cast<size_t>(static_cast<double>(freeBytes) * fillFraction);
-
-        std::string sequence;
-        sequence.reserve(chunkTargetBytes);
-        std::vector<RecordRange> ranges;
+        const auto chunkTargetBytes = fastxChunkTargetBytes(fillFraction);
+        FastxChunkAssembly chunk(chunkTargetBytes);
         std::vector<detail::FastxRecord> records;
         uint64_t recordIndexBase = 0;
 
         auto flush = [&]() {
-            if (ranges.empty()) {
+            if (chunk.empty()) {
                 return;
             }
             const FastxQueryReport chunkReport = queryRecordBatch(
-                makeBatchView(sequence, ranges),
+                makeBatchView(chunk.sequence, chunk.ranges),
                 [&](const RecordQueryView& recordView) {
                     const detail::FastxRecord& fastxRecord =
                         records[static_cast<size_t>(recordView.recordIndex)];
-                    consume(FastxRecordView{
-                        recordIndexBase + recordView.recordIndex,
-                        fastxRecord.header,
-                        fastxRecord.sequence,
-                        recordView.queriedBases,
-                        recordView.queriedKmers,
-                        recordView.positiveKmers,
-                        recordView.hits,
-                    });
+                    consume(
+                        FastxRecordView{
+                            recordIndexBase + recordView.recordIndex,
+                            fastxRecord.header,
+                            fastxRecord.sequence,
+                            recordView.queriedBases,
+                            recordView.queriedKmers,
+                            recordView.positiveKmers,
+                            recordView.hits,
+                        }
+                    );
                 },
                 stream
             );
             accumulateQueryReport(report, chunkReport);
-            recordIndexBase += ranges.size();
-            sequence.clear();
-            ranges.clear();
+            recordIndexBase += chunk.recordCount();
+            chunk.clear();
             records.clear();
         };
 
         while (reader.nextRecord(record)) {
-            ranges.push_back(RecordRange{
-                static_cast<uint64_t>(sequence.size()),
-                static_cast<uint64_t>(record.sequence.size()),
-            });
-            sequence.append(record.sequence);
+            chunk.appendRecord(record.sequence);
             records.push_back(std::move(record));
-            if (sequence.size() >= chunkTargetBytes) {
+            if (chunk.reachedTarget(chunkTargetBytes)) {
                 flush();
             }
         }
@@ -1156,15 +1183,17 @@ class Filter {
             input,
             sourceName,
             [&report](const FastxRecordView& record) {
-                report.records.push_back(FastxDetailedQueryRecord{
-                    record.recordIndex,
-                    std::string(record.header),
-                    std::string(record.sequence),
-                    record.queriedBases,
-                    record.queriedKmers,
-                    record.positiveKmers,
-                    std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
-                });
+                report.records.push_back(
+                    FastxDetailedQueryRecord{
+                        record.recordIndex,
+                        std::string(record.header),
+                        std::string(record.sequence),
+                        record.queriedBases,
+                        record.queriedKmers,
+                        record.positiveKmers,
+                        std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
+                    }
+                );
             },
             fillFraction,
             stream
@@ -1208,13 +1237,26 @@ class Filter {
         ));
     }
 
+    [[nodiscard]] static uint64_t sequenceKmerCount(device_span<const char> d_sequence) {
+        return detail::SequenceKmerInput<Config>{d_sequence}.kmerCount();
+    }
+
+    [[nodiscard]] device_span<const char>
+    stagedSequenceView(cuda::std::span<const char> sequence, cuda::stream_ref stream) const {
+        stageSequence(sequence, stream);
+        return device_span<const char>{
+            thrust::raw_pointer_cast(d_sequence_.data()), sequence.size()
+        };
+    }
+
     /**
      * @brief Launches the insert kernel for a device-resident sequence.
      * @param d_sequence Device-resident sequence.
      * @param stream     CUDA stream.
      */
     void launchInsertSequence(device_span<const char> d_sequence, cuda::stream_ref stream) {
-        const uint64_t numKmers = detail::SequenceKmerInput<Config>{d_sequence}.kmerCount();
+        const auto input = detail::SequenceKmerInput<Config>{d_sequence};
+        const uint64_t numKmers = input.kmerCount();
         if (numKmers == 0) {
             return;
         }
@@ -1222,8 +1264,7 @@ class Filter {
 
         detail::insertSequenceKmersKernel<Config>
             <<<gridSize, Config::cudaBlockSize, 0, stream.get()>>>(
-                detail::SequenceKmerInput<Config>{d_sequence},
-                device_span<Shard>{thrust::raw_pointer_cast(d_shards_.data()), numShards_}
+                input, device_span<Shard>{thrust::raw_pointer_cast(d_shards_.data()), numShards_}
             );
         CUSBF_CUDA_CALL(cudaGetLastError());
     }
@@ -1239,13 +1280,14 @@ class Filter {
         device_span<uint8_t> d_output,
         cuda::stream_ref stream
     ) const {
-        const uint64_t numKmers = detail::SequenceKmerInput<Config>{d_sequence}.kmerCount();
-        constexpr uint64_t kStride = 4;
-        const uint64_t gridSize = cuda::ceil_div(numKmers, Config::cudaBlockSize * kStride);
+        const auto input = detail::SequenceKmerInput<Config>{d_sequence};
+        const uint64_t numKmers = input.kmerCount();
+        const uint64_t gridSize =
+            cuda::ceil_div(numKmers, Config::cudaBlockSize * detail::kContainsSequenceStride);
 
         detail::containsSequenceKmersKernel<Config>
             <<<gridSize, Config::cudaBlockSize, 0, stream.get()>>>(
-                detail::SequenceKmerInput<Config>{d_sequence},
+                input,
                 device_span<const Shard>{thrust::raw_pointer_cast(d_shards_.data()), numShards_},
                 d_output
             );
@@ -1401,6 +1443,17 @@ sectorizedContainsPackedKmer(uint64_t packedKmer, const uint64_t* w) {
     return present;
 }
 
+template <typename Config>
+__device__ __forceinline__ bool kmerIsValid(const uint8_t* tile, uint64_t start) {
+    _Pragma("unroll")
+    for (uint64_t i = 0; i < Config::k; ++i) {
+        if (tile[start + i] == Config::Alphabet::invalidSymbol) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /**
  * @brief Cooperatively loads and encodes a tile of symbols into shared memory.
  *
@@ -1453,7 +1506,7 @@ __global__ __launch_bounds__(Config::cudaBlockSize, 6) void containsSequenceKmer
     device_span<uint8_t> output
 ) {
     // Each thread handles this many consecutive k-mers to amortise packing
-    constexpr uint32_t kStride = 4;
+    constexpr uint32_t kStride = kContainsSequenceStride;
     constexpr uint64_t sequenceTileBases = Config::cudaBlockSize * kStride + Config::k - 1;
 
     __shared__ uint8_t sequenceTile[sequenceTileBases];
@@ -1492,15 +1545,7 @@ __global__ __launch_bounds__(Config::cudaBlockSize, 6) void containsSequenceKmer
                 continue;
             }
             const uint64_t localIdx = threadOffset + s;
-            bool valid = true;
-            _Pragma("unroll")
-            for (uint64_t i = 0; i < Config::k; ++i) {
-                if (sequenceTile[localIdx + i] == Config::Alphabet::invalidSymbol) {
-                    valid = false;
-                    break;
-                }
-            }
-            if (!valid) {
+            if (!kmerIsValid<Config>(sequenceTile, localIdx)) {
                 kmerValidMask &= ~(1u << s);
             }
         }
@@ -1594,13 +1639,7 @@ __global__ void insertSequenceKmersKernel(
     bool active = inRange;
 
     if (active && !blockAllValid) {
-        _Pragma("unroll")
-        for (uint64_t i = 0; i < Config::k; ++i) {
-            if (sequenceTile[localKmerIndex + i] == Config::Alphabet::invalidSymbol) {
-                active = false;
-                break;
-            }
-        }
+        active = kmerIsValid<Config>(sequenceTile, localKmerIndex);
     }
 
     // Inactive threads keep zero masks and a per-lane sentinel shard index so

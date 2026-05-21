@@ -79,20 +79,20 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsParsesWrappedFastqWithCrLf) {
     );
 
     std::vector<StreamedRecord> records;
-    const auto summary = filter.queryFastxFileRecords(
-        file.path,
-        [&](const cusbf::FastxRecordView& record) {
-            records.push_back(StreamedRecord{
-                record.recordIndex,
-                std::string(record.header),
-                std::string(record.sequence),
-                record.queriedBases,
-                record.queriedKmers,
-                record.positiveKmers,
-                std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
-            });
-        }
-    );
+    const auto summary =
+        filter.queryFastxFileRecords(file.path, [&](const cusbf::FastxRecordView& record) {
+            records.push_back(
+                StreamedRecord{
+                    record.recordIndex,
+                    std::string(record.header),
+                    std::string(record.sequence),
+                    record.queriedBases,
+                    record.queriedKmers,
+                    record.positiveKmers,
+                    std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
+                }
+            );
+        });
 
     ASSERT_EQ(records.size(), 1u);
     const auto& record = records.front();
@@ -156,10 +156,9 @@ TEST_F(BloomFilterTest, RecordBatchInsertAndQueryInjectRecordBoundaries) {
     const auto insertReport = filter.insertRecordBatch(batch);
 
     std::vector<StreamedRecord> records;
-    const auto summary = filter.queryRecordBatch(
-        batch,
-        [&](const cusbf::RecordQueryView& record) {
-            records.push_back(StreamedRecord{
+    const auto summary = filter.queryRecordBatch(batch, [&](const cusbf::RecordQueryView& record) {
+        records.push_back(
+            StreamedRecord{
                 record.recordIndex,
                 {},
                 std::string(record.sequence),
@@ -167,9 +166,9 @@ TEST_F(BloomFilterTest, RecordBatchInsertAndQueryInjectRecordBoundaries) {
                 record.queriedKmers,
                 record.positiveKmers,
                 std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
-            });
-        }
-    );
+            }
+        );
+    });
 
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(insertReport.recordsIndexed, 2);
@@ -229,20 +228,20 @@ TEST_F(BloomFilterTest, TripletQueryFastxFileRecordsDoesNotCreateCrossRecordKmer
     );
 
     std::vector<StreamedRecord> records;
-    const auto summary = filter.queryFastxFileRecords(
-        file.path,
-        [&](const cusbf::FastxRecordView& record) {
-            records.push_back(StreamedRecord{
-                record.recordIndex,
-                std::string(record.header),
-                std::string(record.sequence),
-                record.queriedBases,
-                record.queriedKmers,
-                record.positiveKmers,
-                std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
-            });
-        }
-    );
+    const auto summary =
+        filter.queryFastxFileRecords(file.path, [&](const cusbf::FastxRecordView& record) {
+            records.push_back(
+                StreamedRecord{
+                    record.recordIndex,
+                    std::string(record.header),
+                    std::string(record.sequence),
+                    record.queriedBases,
+                    record.queriedKmers,
+                    record.positiveKmers,
+                    std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
+                }
+            );
+        });
 
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(summary.recordsQueried, 2);
@@ -373,10 +372,9 @@ TEST_F(BloomFilterTest, QueryFastxRecordsPreservesWrappedFastaRecordOrder) {
     );
 
     std::vector<StreamedRecord> records;
-    const auto summary = filter.queryFastxRecords(
-        input,
-        [&](const cusbf::FastxRecordView& record) {
-            records.push_back(StreamedRecord{
+    const auto summary = filter.queryFastxRecords(input, [&](const cusbf::FastxRecordView& record) {
+        records.push_back(
+            StreamedRecord{
                 record.recordIndex,
                 std::string(record.header),
                 std::string(record.sequence),
@@ -384,9 +382,9 @@ TEST_F(BloomFilterTest, QueryFastxRecordsPreservesWrappedFastaRecordOrder) {
                 record.queriedKmers,
                 record.positiveKmers,
                 std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
-            });
-        }
-    );
+            }
+        );
+    });
 
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(summary.recordsQueried, 2);
@@ -499,20 +497,20 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsReportInvalidWindowsAsMisses) {
     (void)filter.insertFastxFile(file.path);
 
     std::vector<StreamedRecord> records;
-    const auto summary = filter.queryFastxFileRecords(
-        file.path,
-        [&](const cusbf::FastxRecordView& record) {
-            records.push_back(StreamedRecord{
-                record.recordIndex,
-                std::string(record.header),
-                std::string(record.sequence),
-                record.queriedBases,
-                record.queriedKmers,
-                record.positiveKmers,
-                std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
-            });
-        }
-    );
+    const auto summary =
+        filter.queryFastxFileRecords(file.path, [&](const cusbf::FastxRecordView& record) {
+            records.push_back(
+                StreamedRecord{
+                    record.recordIndex,
+                    std::string(record.header),
+                    std::string(record.sequence),
+                    record.queriedBases,
+                    record.queriedKmers,
+                    record.positiveKmers,
+                    std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
+                }
+            );
+        });
 
     ASSERT_EQ(records.size(), 1u);
     const auto& record = records.front();
@@ -568,6 +566,97 @@ TEST_F(BloomFilterTest, FastxDetailedAndAggregateReportsMatch) {
     EXPECT_EQ(detailedBases, detailed.summary.queriedBases);
     EXPECT_EQ(detailedKmers, detailed.summary.queriedKmers);
     EXPECT_EQ(detailedPositiveKmers, detailed.summary.positiveKmers);
+}
+
+TEST_F(BloomFilterTest, ForcedFastxChunkFlushPreservesRecordOrderAndCounts) {
+    cusbf::Filter<TestConfig> filter(1 << 12);
+    constexpr double fillFraction = 0.0;
+
+    const std::string sequenceA = "ACGTACGT";
+    const std::string sequenceB = "ACGTNACGTACGTA";
+    const std::string sequenceC = "TGCATGCA";
+    const std::vector<uint8_t> sequenceBHits{0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
+    const uint64_t expectedInsertKmers =
+        (sequenceA.size() - TestConfig::k + 1) +
+        static_cast<uint64_t>(std::count(sequenceBHits.begin(), sequenceBHits.end(), uint8_t{1})) +
+        (sequenceC.size() - TestConfig::k + 1);
+
+    const auto file = writeTempFile(
+        ">first\n"
+        "ACGTACGT\n"
+        ">second\n"
+        "ACGTNACGTACGTA\n"
+        ">third\n"
+        "TGCATGCA\n"
+    );
+
+    const auto insertReport = filter.insertFastxFile(file.path, fillFraction);
+    const auto aggregate = filter.queryFastxFile(file.path, fillFraction);
+
+    std::vector<StreamedRecord> streamedRecords;
+    const auto streamed = filter.queryFastxFileRecords(
+        file.path,
+        [&](const cusbf::FastxRecordView& record) {
+            streamedRecords.push_back(
+                StreamedRecord{
+                    record.recordIndex,
+                    std::string(record.header),
+                    std::string(record.sequence),
+                    record.queriedBases,
+                    record.queriedKmers,
+                    record.positiveKmers,
+                    std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
+                }
+            );
+        },
+        fillFraction
+    );
+    const auto detailed = filter.queryFastxFileDetailed(file.path, fillFraction);
+
+    ASSERT_EQ(streamedRecords.size(), 3u);
+    ASSERT_EQ(detailed.records.size(), 3u);
+
+    EXPECT_EQ(insertReport.recordsIndexed, 3);
+    EXPECT_EQ(insertReport.indexedBases, sequenceA.size() + sequenceB.size() + sequenceC.size());
+    EXPECT_EQ(insertReport.insertedKmers, expectedInsertKmers);
+    EXPECT_EQ(aggregate.recordsQueried, 3);
+    EXPECT_EQ(aggregate.queriedBases, insertReport.indexedBases);
+    EXPECT_EQ(aggregate.queriedKmers, insertReport.insertedKmers);
+    EXPECT_EQ(aggregate.positiveKmers, insertReport.insertedKmers);
+    EXPECT_EQ(streamed.recordsQueried, aggregate.recordsQueried);
+    EXPECT_EQ(streamed.queriedBases, aggregate.queriedBases);
+    EXPECT_EQ(streamed.queriedKmers, aggregate.queriedKmers);
+    EXPECT_EQ(streamed.positiveKmers, aggregate.positiveKmers);
+    EXPECT_EQ(detailed.summary.recordsQueried, aggregate.recordsQueried);
+    EXPECT_EQ(detailed.summary.queriedBases, aggregate.queriedBases);
+    EXPECT_EQ(detailed.summary.queriedKmers, aggregate.queriedKmers);
+    EXPECT_EQ(detailed.summary.positiveKmers, aggregate.positiveKmers);
+
+    EXPECT_EQ(streamedRecords[0].recordIndex, 0u);
+    EXPECT_EQ(streamedRecords[0].header, "first");
+    EXPECT_EQ(streamedRecords[0].sequence, sequenceA);
+    EXPECT_TRUE(allOnes(streamedRecords[0].hits));
+    EXPECT_EQ(streamedRecords[1].recordIndex, 1u);
+    EXPECT_EQ(streamedRecords[1].header, "second");
+    EXPECT_EQ(streamedRecords[1].sequence, sequenceB);
+    EXPECT_EQ(streamedRecords[1].hits, sequenceBHits);
+    EXPECT_EQ(streamedRecords[2].recordIndex, 2u);
+    EXPECT_EQ(streamedRecords[2].header, "third");
+    EXPECT_EQ(streamedRecords[2].sequence, sequenceC);
+    EXPECT_TRUE(allOnes(streamedRecords[2].hits));
+
+    EXPECT_EQ(detailed.records[0].recordIndex, 0u);
+    EXPECT_EQ(detailed.records[0].header, "first");
+    EXPECT_EQ(detailed.records[0].sequence, sequenceA);
+    EXPECT_TRUE(allOnes(detailed.records[0].hits));
+    EXPECT_EQ(detailed.records[1].recordIndex, 1u);
+    EXPECT_EQ(detailed.records[1].header, "second");
+    EXPECT_EQ(detailed.records[1].sequence, sequenceB);
+    EXPECT_EQ(detailed.records[1].hits, sequenceBHits);
+    EXPECT_EQ(detailed.records[2].recordIndex, 2u);
+    EXPECT_EQ(detailed.records[2].header, "third");
+    EXPECT_EQ(detailed.records[2].sequence, sequenceC);
+    EXPECT_TRUE(allOnes(detailed.records[2].hits));
 }
 
 TEST_F(BloomFilterTest, MalformedFastqThrowsOnQualityLengthMismatch) {

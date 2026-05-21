@@ -136,8 +136,8 @@ class CPUTimer {
 };
 
 // Concatenate all records in a FASTA/FASTQ file into a single sequence,
-// with 'N' as a separatorbetween records
-std::vector<char> readFastxConcatenated(std::string_view path) {
+// inserting @p separator between records.
+inline std::vector<char> readFastxConcatenated(std::string_view path, char separator = 'N') {
     auto input = cusbf::detail::openFastxFile(path);
     cusbf::detail::FastxReader reader(*input, path);
     cusbf::detail::FastxRecord record;
@@ -147,7 +147,7 @@ std::vector<char> readFastxConcatenated(std::string_view path) {
 
     while (reader.nextRecord(record)) {
         if (!firstRecord) {
-            sequence.push_back('N');
+            sequence.push_back(separator);
         }
         firstRecord = false;
         sequence.insert(sequence.end(), record.sequence.begin(), record.sequence.end());

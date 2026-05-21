@@ -48,25 +48,6 @@ static std::string g_insertFastxPath;
 static std::string g_queryFastxPath;
 static uint64_t g_filterBits = 0;
 
-static std::vector<char> readFastxConcatenated(std::string_view path) {
-    auto input = cusbf::detail::openFastxFile(path);
-    cusbf::detail::FastxReader reader(*input, path);
-    cusbf::detail::FastxRecord record;
-
-    std::vector<char> sequence;
-    bool firstRecord = true;
-
-    while (reader.nextRecord(record)) {
-        if (!firstRecord) {
-            sequence.push_back(static_cast<char>(PARAM_SWEEP_ALPHABET::separator));
-        }
-        firstRecord = false;
-        sequence.insert(sequence.end(), record.sequence.begin(), record.sequence.end());
-    }
-
-    return sequence;
-}
-
 static void prepareFastxData() {
     if (g_fastxData) {
         return;
@@ -79,7 +60,9 @@ static void prepareFastxData() {
     g_fastxData = std::make_unique<FastxInputData>();
 
     // Read insert FASTX
-    std::vector<char> hostInsert = readFastxConcatenated(g_insertFastxPath);
+    std::vector<char> hostInsert = benchmark_common::readFastxConcatenated(
+        g_insertFastxPath, static_cast<char>(PARAM_SWEEP_ALPHABET::separator)
+    );
     if (hostInsert.empty()) {
         std::cerr << "Error: Insert FASTX file is empty or contains no sequences" << std::endl;
         std::exit(1);
@@ -97,7 +80,9 @@ static void prepareFastxData() {
 
     // Query sequence (throughput benchmark)
     if (!g_queryFastxPath.empty()) {
-        std::vector<char> hostQuery = readFastxConcatenated(g_queryFastxPath);
+        std::vector<char> hostQuery = benchmark_common::readFastxConcatenated(
+            g_queryFastxPath, static_cast<char>(PARAM_SWEEP_ALPHABET::separator)
+        );
         if (hostQuery.empty()) {
             std::cerr << "Error: Query FASTX file is empty" << std::endl;
             std::exit(1);
@@ -278,22 +263,13 @@ void runShSweepFpr(Fixture& fixture, benchmark::State& state) {
 }
 
 // Macros for config / fixture / benchmark definition and registration
+#define PARAM_SWEEP_CONFIG_SYMBOL(K, S, M, H) ParamSweepConfig_##K##_##S##_##M##_##H
+#define PARAM_SWEEP_FIXTURE_SYMBOL(K, S, M, H) ParamSweepFixture_##K##_##S##_##M##_##H
 #define PARAM_SWEEP_DEFINE_CONFIG_AND_FIXTURE(K, S, M, H)     \
-    using BENCHMARK_SUPERBLOOM_CONFIG_SYMBOL(K, S, M, H) =    \
+    using PARAM_SWEEP_CONFIG_SYMBOL(K, S, M, H) =             \
         cusbf::Config<K, S, M, H, 256, PARAM_SWEEP_ALPHABET>; \
-    using BENCHMARK_SUPERBLOOM_FIXTURE_SYMBOL(K, S, M, H) =   \
-        ShSweepFixture<BENCHMARK_SUPERBLOOM_CONFIG_SYMBOL(K, S, M, H)>;
-
-#define PARAM_SWEEP_DEFINE_ALL(FixtureName)                             \
-    BENCHMARK_DEFINE_F(FixtureName, Insert)(benchmark::State & state) { \
-        runShSweepInsert(*this, state);                                 \
-    }                                                                   \
-    BENCHMARK_DEFINE_F(FixtureName, Query)(benchmark::State & state) {  \
-        runShSweepQuery(*this, state);                                  \
-    }                                                                   \
-    BENCHMARK_DEFINE_F(FixtureName, FPR)(benchmark::State & state) {    \
-        runShSweepFpr(*this, state);                                    \
-    }
+    using PARAM_SWEEP_FIXTURE_SYMBOL(K, S, M, H) =            \
+        ShSweepFixture<PARAM_SWEEP_CONFIG_SYMBOL(K, S, M, H)>;
 
 #define PARAM_SWEEP_BENCHMARK_CONFIG \
     ->Unit(benchmark::kMillisecond)  \
@@ -305,11 +281,6 @@ void runShSweepFpr(Fixture& fixture, benchmark::State& state) {
 #define REGISTER_PARAM_SWEEP_BENCHMARK(FixtureName, BenchName) \
     BENCHMARK_REGISTER_F(FixtureName, BenchName)               \
     PARAM_SWEEP_BENCHMARK_CONFIG
-
-#define REGISTER_PARAM_SWEEP_ALL(FixtureName)            \
-    REGISTER_PARAM_SWEEP_BENCHMARK(FixtureName, Insert); \
-    REGISTER_PARAM_SWEEP_BENCHMARK(FixtureName, Query);  \
-    REGISTER_PARAM_SWEEP_BENCHMARK(FixtureName, FPR);
 
 // H-list: 4 hash values for dense coverage.
 #define PARAM_SWEEP_H_DEFAULT(MACRO, K, S, M) \
@@ -640,11 +611,24 @@ void runShSweepFpr(Fixture& fixture, benchmark::State& state) {
 #define PARAM_SWEEP_DEFINE_CONFIG_AND_FIXTURE_WRAPPER(K, S, M, H) \
     PARAM_SWEEP_DEFINE_CONFIG_AND_FIXTURE(K, S, M, H)
 
-#define PARAM_SWEEP_DEFINE_ALL_WRAPPER(K, S, M, H) \
-    PARAM_SWEEP_DEFINE_ALL(BENCHMARK_SUPERBLOOM_FIXTURE_SYMBOL(K, S, M, H))
+#define PARAM_SWEEP_DEFINE_ALL_WRAPPER(K, S, M, H)                     \
+    BENCHMARK_DEFINE_F(PARAM_SWEEP_FIXTURE_SYMBOL(K, S, M, H), Insert) \
+    (benchmark::State & state) {                                       \
+        runShSweepInsert(*this, state);                                \
+    }                                                                  \
+    BENCHMARK_DEFINE_F(PARAM_SWEEP_FIXTURE_SYMBOL(K, S, M, H), Query)  \
+    (benchmark::State & state) {                                       \
+        runShSweepQuery(*this, state);                                 \
+    }                                                                  \
+    BENCHMARK_DEFINE_F(PARAM_SWEEP_FIXTURE_SYMBOL(K, S, M, H), FPR)    \
+    (benchmark::State & state) {                                       \
+        runShSweepFpr(*this, state);                                   \
+    }
 
-#define PARAM_SWEEP_REGISTER_ALL_WRAPPER(K, S, M, H) \
-    REGISTER_PARAM_SWEEP_ALL(BENCHMARK_SUPERBLOOM_FIXTURE_SYMBOL(K, S, M, H))
+#define PARAM_SWEEP_REGISTER_ALL_WRAPPER(K, S, M, H)                                \
+    REGISTER_PARAM_SWEEP_BENCHMARK(PARAM_SWEEP_FIXTURE_SYMBOL(K, S, M, H), Insert); \
+    REGISTER_PARAM_SWEEP_BENCHMARK(PARAM_SWEEP_FIXTURE_SYMBOL(K, S, M, H), Query);  \
+    REGISTER_PARAM_SWEEP_BENCHMARK(PARAM_SWEEP_FIXTURE_SYMBOL(K, S, M, H), FPR);
 
 PARAM_SWEEP_APPLY_DEFAULT(PARAM_SWEEP_DEFINE_CONFIG_AND_FIXTURE_WRAPPER)
 PARAM_SWEEP_APPLY_DEFAULT(PARAM_SWEEP_DEFINE_ALL_WRAPPER)
