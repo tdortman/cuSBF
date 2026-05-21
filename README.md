@@ -122,14 +122,36 @@ filter.containsSequenceDevice(
     cusbf::device_span<uint8_t>(d_results)
 );
 
+// Dense record batch API: one concatenated payload plus explicit record ranges.
+std::string batchSequence = "ACGTACGTTGCATGCA";
+std::vector<cusbf::BioSequenceRecordRange> batchRanges{
+    {0, 8},
+    {8, 8},
+};
+auto batchSummary = filter.queryRecordBatch(
+    {
+        batchSequence,
+        cuda::std::span<const cusbf::BioSequenceRecordRange>{batchRanges.data(), batchRanges.size()},
+    },
+    [](const cusbf::BioSequenceQueryRecordView& record) {
+        // record.sequence is the original record, record.hits is one bool per k-mer
+    }
+);
+
 // FASTA/FASTQ file insertion and aggregate query (chunked internally for large inputs)
 filter.insertFastxFile("reference.fasta");
 auto summary = filter.queryFastxFile("queries.fastq");
 
-// Detailed FASTX query keeps per-record hit vectors in source order
+// Streaming FASTX query emits each record as soon as its chunk completes
+auto streamed = filter.queryFastxFileRecords(
+    "queries.fastq",
+    [](const cusbf::FastxQueryRecordView& record) {
+        // record.header, record.sequence, record.queriedKmers, record.hits
+    }
+);
+
+// Detailed FASTX query keeps owning per-record copies in source order
 auto detailed = filter.queryFastxFileDetailed("queries.fastq");
-// detailed.summary mirrors queryFastxFile(...)
-// detailed.records[i].hits contains one bool per k-mer window for record i
 
 // Inspect filter state
 double load = filter.loadFactor();  // fraction of set bits

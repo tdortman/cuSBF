@@ -10,18 +10,42 @@
 #include <utility>
 #include <vector>
 
+#include <cuda/std/span>
+
 #include <cusbf/gzstreambuf.hpp>
 
 namespace cusbf {
 
-/// @brief Summary statistics returned by Filter insert operations on FASTX input.
+/// @brief Ordered non-overlapping byte range for one record inside a dense sequence batch.
+struct BioSequenceRecordRange {
+    uint64_t sequenceOffset{};
+    uint64_t sequenceBytes{};
+};
+
+/// @brief Dense host-resident sequence batch plus explicit record boundaries.
+struct BioSequenceBatchView {
+    std::string_view sequence{};
+    cuda::std::span<const BioSequenceRecordRange> records{};
+};
+
+/// @brief Per-record query payload emitted by queryRecordBatch().
+struct BioSequenceQueryRecordView {
+    uint64_t recordIndex{};
+    std::string_view sequence{};
+    uint64_t queriedBases{};
+    uint64_t queriedKmers{};
+    uint64_t positiveKmers{};
+    cuda::std::span<const uint8_t> hits{};
+};
+
+/// @brief Summary statistics returned by Filter insert operations on FASTX and record-batch input.
 struct FastxInsertReport {
     uint64_t recordsIndexed{};
     uint64_t indexedBases{};
     uint64_t insertedKmers{};
 };
 
-/// @brief Summary statistics returned by Filter query operations on FASTX input.
+/// @brief Summary statistics returned by Filter query operations on FASTX and record-batch input.
 struct FastxQueryReport {
     uint64_t recordsQueried{};
     uint64_t queriedBases{};
@@ -29,9 +53,22 @@ struct FastxQueryReport {
     uint64_t positiveKmers{};
 };
 
+/// @brief Per-record query payload emitted by FASTX streaming query APIs.
+struct FastxQueryRecordView {
+    uint64_t recordIndex{};
+    std::string_view header{};
+    std::string_view sequence{};
+    uint64_t queriedBases{};
+    uint64_t queriedKmers{};
+    uint64_t positiveKmers{};
+    cuda::std::span<const uint8_t> hits{};
+};
+
 /// @brief Detailed per-record query results returned by Filter FASTX detail APIs.
 struct FastxDetailedQueryRecord {
     uint64_t recordIndex{};
+    std::string header;
+    std::string sequence;
     uint64_t queriedBases{};
     uint64_t queriedKmers{};
     uint64_t positiveKmers{};
@@ -55,6 +92,7 @@ enum class FastxFormat : uint8_t {
 
 /// @brief A single sequence record extracted from a FASTA/FASTQ stream.
 struct FastxRecord {
+    std::string header;
     std::string sequence;
 };
 
@@ -79,6 +117,7 @@ class FastxReader {
     }
 
     [[nodiscard]] bool nextRecord(FastxRecord& record) {
+        record.header.clear();
         record.sequence.clear();
 
         const std::string_view header = readHeaderLine();
@@ -103,6 +142,7 @@ class FastxReader {
             throwParseError("mixed FASTA and FASTQ records are not supported");
         }
 
+        record.header.assign(header.substr(1));
         if (format_ == FastxFormat::fasta) {
             readFastaSequence(record.sequence);
         } else {

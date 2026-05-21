@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -333,6 +334,19 @@ __device__ __forceinline__ void atomicOrWord(uint64_t* ptr, uint64_t value) {
  */
 template <typename Config>
 class Filter {
+   private:
+    struct PreparedRecordRange {
+        uint64_t recordIndex{};
+        uint64_t inputOffset{};
+        uint64_t outputOffset{};
+        uint64_t size{};
+        uint64_t validKmers{};
+    };
+    struct PreparedRecordBatch {
+        std::string sequence;
+        std::vector<PreparedRecordRange> records;
+    };
+
    public:
     /**
      * @brief One 256-bit filter block stored as an array of Config::blockWordCount words.
@@ -504,6 +518,35 @@ class Filter {
     }
 
     /**
+     * @brief Inserts a dense host-resident record batch.
+     *
+     * @p batch.sequence stores the raw record payloads back-to-back without separators.
+     * @p batch.records stores ordered, non-overlapping byte ranges into that dense buffer.
+     * The filter injects alphabet separators between records internally, so callers do not
+     * need to materialise separator bytes themselves.
+     *
+     * Synchronises before returning.
+     *
+     * @param batch   Dense record batch to insert.
+     * @param stream  CUDA stream to use.
+     * @return Report summarising records indexed, bases processed, and k-mers inserted.
+     */
+    [[nodiscard]] FastxInsertReport
+    insertRecordBatch(BioSequenceBatchView batch, cuda::stream_ref stream = cudaStream_t{}) {
+        const PreparedRecordBatch prepared = prepareRecordBatch(batch);
+        FastxInsertReport report;
+        report.recordsIndexed = prepared.records.size();
+        for (const PreparedRecordRange& record : prepared.records) {
+            report.indexedBases += record.size;
+            report.insertedKmers += record.validKmers;
+        }
+        if (!prepared.sequence.empty()) {
+            (void)insertSequence(prepared.sequence, stream);
+        }
+        return report;
+    }
+
+    /**
      * @brief Inserts all k-mers from a FASTA/FASTQ input stream.
      *
      * Reads records in streaming fashion, accumulating them until the
@@ -598,6 +641,47 @@ class Filter {
     }
 
     /**
+     * @brief Queries a dense host-resident record batch and returns aggregate counts.
+     *
+     * @p batch.sequence stores raw record payloads back-to-back without separators.
+     * @p batch.records stores ordered, non-overlapping byte ranges into that dense buffer.
+     * The filter injects alphabet separators between records internally, so cross-record
+     * k-mers are never formed.
+     *
+     * Synchronises before returning.
+     *
+     * @param batch   Dense record batch to query.
+     * @param stream  CUDA stream to use.
+     * @return Aggregate query summary for the whole batch.
+     */
+    [[nodiscard]] FastxQueryReport
+    queryRecordBatch(BioSequenceBatchView batch, cuda::stream_ref stream = cudaStream_t{}) const {
+        return queryRecordBatch(batch, [](const BioSequenceQueryRecordView&) {}, stream);
+    }
+
+    /**
+     * @brief Queries a dense host-resident record batch and streams per-record results.
+     *
+     * The callback receives one @ref BioSequenceQueryRecordView per input record in source
+     * order. The hit span remains valid only for the duration of the callback.
+     *
+     * Synchronises before returning.
+     *
+     * @param batch    Dense record batch to query.
+     * @param consume  Per-record callback.
+     * @param stream   CUDA stream to use.
+     * @return Aggregate query summary for the whole batch.
+     */
+    template <typename Consumer>
+    [[nodiscard]] FastxQueryReport queryRecordBatch(
+        BioSequenceBatchView batch,
+        Consumer&& consume,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        return queryPreparedRecordBatch(prepareRecordBatch(batch), batch.sequence, consume, stream);
+    }
+
+    /**
      * @brief Queries all k-mers from a FASTA/FASTQ input stream via chunked streaming.
      *
      * @see insertFastx
@@ -622,6 +706,45 @@ class Filter {
     ) const {
         auto input = detail::openFastxFile(path);
         return queryFastxStream(*input, path, fillFraction, stream);
+    }
+
+    /**
+     * @brief Queries a FASTA/FASTQ stream and emits one record result per parsed record.
+     *
+     * The callback receives record headers, record sequences, aggregate counts, and the
+     * per-window hit span for each record as soon as its chunk has been processed. The hit
+     * span remains valid only for the duration of the callback.
+     *
+     * @param input         Input stream containing FASTA or FASTQ records.
+     * @param consume       Per-record callback.
+     * @param fillFraction  Fraction of free GPU memory to fill per chunk (default 0.7).
+     * @param stream        CUDA stream to use.
+     * @return Aggregate query summary for the whole stream.
+     */
+    template <typename Consumer>
+    [[nodiscard]] FastxQueryReport queryFastxRecords(
+        std::istream& input,
+        Consumer&& consume,
+        double fillFraction = 0.7,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        return queryFastxRecordsStream(input, "<stream>", consume, fillFraction, stream);
+    }
+
+    /**
+     * @brief Queries a FASTA/FASTQ file and emits one record result per parsed record.
+     *
+     * @see queryFastxRecords
+     */
+    template <typename Consumer>
+    [[nodiscard]] FastxQueryReport queryFastxFileRecords(
+        std::string_view path,
+        Consumer&& consume,
+        double fillFraction = 0.7,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        auto input = detail::openFastxFile(path);
+        return queryFastxRecordsStream(*input, path, consume, fillFraction, stream);
     }
 
     /**
@@ -705,12 +828,6 @@ class Filter {
     }
 
    private:
-    struct FastxRecordRange {
-        uint64_t recordIndex{};
-        uint64_t offset{};
-        uint64_t size{};
-        uint64_t validKmers{};
-    };
 
     uint64_t numShards_{};
     uint64_t filterBits_{};
@@ -757,14 +874,7 @@ class Filter {
         return validKmers;
     }
 
-    static void appendFastxRecord(std::string& sequence, std::string_view recordSequence) {
-        if (!sequence.empty()) {
-            appendFastxBoundary(sequence);
-        }
-        sequence.append(recordSequence);
-    }
-
-    static void appendFastxBoundary(std::string& sequence) {
+    static void appendRecordBoundary(std::string& sequence) {
         const uint64_t remainder = sequence.size() % Config::symbolWidth;
         if (remainder != 0) {
             sequence.append(
@@ -774,43 +884,140 @@ class Filter {
         sequence.append(Config::symbolWidth, static_cast<char>(Config::Alphabet::separator));
     }
 
-    static void appendFastxRecordWithRange(
-        std::string& sequence,
-        std::vector<FastxRecordRange>& ranges,
-        std::string_view recordSequence,
-        uint64_t recordIndex,
-        uint64_t validKmers
-    ) {
-        if (!sequence.empty()) {
-            appendFastxBoundary(sequence);
+    static void validateRecordBatch(BioSequenceBatchView batch) {
+        uint64_t nextOffset = 0;
+        for (const BioSequenceRecordRange& record : batch.records) {
+            if (record.sequenceOffset < nextOffset) {
+                throw std::invalid_argument(
+                    "record batch ranges must be ordered and non-overlapping"
+                );
+            }
+            if (record.sequenceOffset > batch.sequence.size() ||
+                record.sequenceBytes > batch.sequence.size() - record.sequenceOffset) {
+                throw std::invalid_argument("record batch range exceeds the source sequence");
+            }
+            if (record.sequenceOffset % Config::symbolWidth != 0 ||
+                record.sequenceBytes % Config::symbolWidth != 0) {
+                throw std::invalid_argument(
+                    "record batch ranges must align to the configured alphabet symbol width"
+                );
+            }
+            nextOffset = record.sequenceOffset + record.sequenceBytes;
         }
-        const uint64_t offset = recordSymbolCount(sequence.size());
-        sequence.append(recordSequence);
-        ranges.push_back(FastxRecordRange{recordIndex, offset, recordSequence.size(), validKmers});
+    }
+
+    static void appendPreparedRecord(
+        std::string& output,
+        std::vector<PreparedRecordRange>& ranges,
+        uint64_t recordIndex,
+        uint64_t inputOffset,
+        std::string_view recordSequence
+    ) {
+        if (!output.empty()) {
+            appendRecordBoundary(output);
+        }
+        const uint64_t outputOffset = recordSymbolCount(output.size());
+        output.append(recordSequence);
+        ranges.push_back(PreparedRecordRange{
+            recordIndex,
+            inputOffset,
+            outputOffset,
+            static_cast<uint64_t>(recordSequence.size()),
+            validRecordKmerCount(recordSequence),
+        });
+    }
+
+    [[nodiscard]] static PreparedRecordBatch prepareRecordBatch(BioSequenceBatchView batch) {
+        validateRecordBatch(batch);
+
+        PreparedRecordBatch prepared;
+        prepared.sequence.reserve(
+            batch.sequence.size() + batch.records.size() * Config::symbolWidth
+        );
+        prepared.records.reserve(batch.records.size());
+
+        for (uint64_t recordIndex = 0; recordIndex < batch.records.size(); ++recordIndex) {
+            const BioSequenceRecordRange& record = batch.records[recordIndex];
+            appendPreparedRecord(
+                prepared.sequence,
+                prepared.records,
+                recordIndex,
+                record.sequenceOffset,
+                batch.sequence.substr(record.sequenceOffset, record.sequenceBytes)
+            );
+        }
+        return prepared;
+    }
+
+    [[nodiscard]] static BioSequenceBatchView makeBatchView(
+        const std::string& sequence,
+        const std::vector<BioSequenceRecordRange>& ranges
+    ) {
+        return BioSequenceBatchView{
+            sequence,
+            cuda::std::span<const BioSequenceRecordRange>{ranges.data(), ranges.size()},
+        };
+    }
+
+    static void accumulateInsertReport(FastxInsertReport& total, const FastxInsertReport& chunk) {
+        total.recordsIndexed += chunk.recordsIndexed;
+        total.indexedBases += chunk.indexedBases;
+        total.insertedKmers += chunk.insertedKmers;
+    }
+
+    static void accumulateQueryReport(FastxQueryReport& total, const FastxQueryReport& chunk) {
+        total.recordsQueried += chunk.recordsQueried;
+        total.queriedBases += chunk.queriedBases;
+        total.queriedKmers += chunk.queriedKmers;
+        total.positiveKmers += chunk.positiveKmers;
     }
 
     template <typename Consumer>
-    void processFastxQueryChunk(
-        std::string_view sequence,
-        const std::vector<FastxRecordRange>& ranges,
-        FastxQueryReport& report,
+    [[nodiscard]] FastxQueryReport queryPreparedRecordBatch(
+        const PreparedRecordBatch& batch,
+        std::string_view inputSequence,
         Consumer&& consume,
         cuda::stream_ref stream
     ) const {
-        const auto hits = containsSequence(sequence, stream);
-        for (const FastxRecordRange& range : ranges) {
-            const uint64_t kmers = recordKmerCount(range.size);
+        FastxQueryReport report;
+        report.recordsQueried = batch.records.size();
+        for (const PreparedRecordRange& record : batch.records) {
+            report.queriedBases += record.size;
+            report.queriedKmers += record.validKmers;
+        }
+
+        const auto hits = containsSequence(batch.sequence, stream);
+        for (const PreparedRecordRange& record : batch.records) {
+            const uint64_t kmers = recordKmerCount(record.size);
+            const auto sequence =
+                inputSequence.substr(static_cast<size_t>(record.inputOffset), static_cast<size_t>(record.size));
             if (kmers == 0) {
-                consume(range, hits, 0, 0);
+                consume(BioSequenceQueryRecordView{
+                    record.recordIndex,
+                    sequence,
+                    record.size,
+                    record.validKmers,
+                    0,
+                    cuda::std::span<const uint8_t>{},
+                });
                 continue;
             }
 
-            const auto begin = hits.begin() + static_cast<ptrdiff_t>(range.offset);
-            const auto end = begin + static_cast<ptrdiff_t>(kmers);
-            const auto positiveKmers = static_cast<uint64_t>(std::count(begin, end, uint8_t{1}));
+            const auto* hitBegin = hits.data() + static_cast<ptrdiff_t>(record.outputOffset);
+            const auto hitSpan = cuda::std::span<const uint8_t>{hitBegin, static_cast<size_t>(kmers)};
+            const auto positiveKmers =
+                static_cast<uint64_t>(std::count(hitSpan.begin(), hitSpan.end(), uint8_t{1}));
             report.positiveKmers += positiveKmers;
-            consume(range, hits, kmers, positiveKmers);
+            consume(BioSequenceQueryRecordView{
+                record.recordIndex,
+                sequence,
+                record.size,
+                record.validKmers,
+                positiveKmers,
+                hitSpan,
+            });
         }
+        return report;
     }
 
     /// @brief Internal implementation shared by insertFastx() and insertFastxFile().
@@ -832,21 +1039,28 @@ class Filter {
 
         std::string sequence;
         sequence.reserve(chunkTargetBytes);
-        while (reader.nextRecord(record)) {
-            ++report.recordsIndexed;
-            report.indexedBases += record.sequence.size();
-            report.insertedKmers += validRecordKmerCount(record.sequence);
-            appendFastxRecord(sequence, record.sequence);
+        std::vector<BioSequenceRecordRange> ranges;
+        auto flush = [&]() {
+            if (ranges.empty()) {
+                return;
+            }
+            accumulateInsertReport(report, insertRecordBatch(makeBatchView(sequence, ranges), stream));
+            sequence.clear();
+            ranges.clear();
+        };
 
+        while (reader.nextRecord(record)) {
+            ranges.push_back(BioSequenceRecordRange{
+                static_cast<uint64_t>(sequence.size()),
+                static_cast<uint64_t>(record.sequence.size()),
+            });
+            sequence.append(record.sequence);
             if (sequence.size() >= chunkTargetBytes) {
-                (void)insertSequence(sequence, stream);
-                sequence.clear();
+                flush();
             }
         }
 
-        if (!sequence.empty()) {
-            (void)insertSequence(sequence, stream);
-        }
+        flush();
         return report;
     }
 
@@ -854,6 +1068,19 @@ class Filter {
     [[nodiscard]] FastxQueryReport queryFastxStream(
         std::istream& input,
         std::string_view sourceName,
+        double fillFraction,
+        cuda::stream_ref stream
+    ) const {
+        return queryFastxRecordsStream(
+            input, sourceName, [](const FastxQueryRecordView&) {}, fillFraction, stream
+        );
+    }
+
+    template <typename Consumer>
+    [[nodiscard]] FastxQueryReport queryFastxRecordsStream(
+        std::istream& input,
+        std::string_view sourceName,
+        Consumer&& consume,
         double fillFraction,
         cuda::stream_ref stream
     ) const {
@@ -869,39 +1096,51 @@ class Filter {
 
         std::string sequence;
         sequence.reserve(chunkTargetBytes);
-        std::vector<FastxRecordRange> ranges;
-        uint64_t recordIndex = 0;
+        std::vector<BioSequenceRecordRange> ranges;
+        std::vector<detail::FastxRecord> records;
+        uint64_t recordIndexBase = 0;
+
+        auto flush = [&]() {
+            if (ranges.empty()) {
+                return;
+            }
+            const FastxQueryReport chunkReport = queryRecordBatch(
+                makeBatchView(sequence, ranges),
+                [&](const BioSequenceQueryRecordView& recordView) {
+                    const detail::FastxRecord& fastxRecord =
+                        records[static_cast<size_t>(recordView.recordIndex)];
+                    consume(FastxQueryRecordView{
+                        recordIndexBase + recordView.recordIndex,
+                        fastxRecord.header,
+                        fastxRecord.sequence,
+                        recordView.queriedBases,
+                        recordView.queriedKmers,
+                        recordView.positiveKmers,
+                        recordView.hits,
+                    });
+                },
+                stream
+            );
+            accumulateQueryReport(report, chunkReport);
+            recordIndexBase += ranges.size();
+            sequence.clear();
+            ranges.clear();
+            records.clear();
+        };
 
         while (reader.nextRecord(record)) {
-            const uint64_t validKmers = validRecordKmerCount(record.sequence);
-            ++report.recordsQueried;
-            report.queriedBases += record.sequence.size();
-            report.queriedKmers += validKmers;
-            appendFastxRecordWithRange(sequence, ranges, record.sequence, recordIndex, validKmers);
-            ++recordIndex;
-
+            ranges.push_back(BioSequenceRecordRange{
+                static_cast<uint64_t>(sequence.size()),
+                static_cast<uint64_t>(record.sequence.size()),
+            });
+            sequence.append(record.sequence);
+            records.push_back(std::move(record));
             if (sequence.size() >= chunkTargetBytes) {
-                processFastxQueryChunk(
-                    sequence,
-                    ranges,
-                    report,
-                    [](const auto&, const auto&, uint64_t, uint64_t) {},
-                    stream
-                );
-                sequence.clear();
-                ranges.clear();
+                flush();
             }
         }
 
-        if (!sequence.empty()) {
-            processFastxQueryChunk(
-                sequence,
-                ranges,
-                report,
-                [](const auto&, const auto&, uint64_t, uint64_t) {},
-                stream
-            );
-        }
+        flush();
         return report;
     }
 
@@ -912,91 +1151,24 @@ class Filter {
         double fillFraction,
         cuda::stream_ref stream
     ) const {
-        detail::FastxReader reader(input, sourceName);
-        detail::FastxRecord record;
         FastxDetailedQueryReport report;
-
-        size_t freeBytes = 0;
-        size_t totalBytes = 0;
-        CUSBF_CUDA_CALL(cudaMemGetInfo(&freeBytes, &totalBytes));
-        const auto chunkTargetBytes =
-            static_cast<size_t>(static_cast<double>(freeBytes) * fillFraction);
-
-        std::string sequence;
-        sequence.reserve(chunkTargetBytes);
-        std::vector<FastxRecordRange> ranges;
-        uint64_t recordIndex = 0;
-
-        while (reader.nextRecord(record)) {
-            const uint64_t validKmers = validRecordKmerCount(record.sequence);
-            ++report.summary.recordsQueried;
-            report.summary.queriedBases += record.sequence.size();
-            report.summary.queriedKmers += validKmers;
-            appendFastxRecordWithRange(sequence, ranges, record.sequence, recordIndex, validKmers);
-            ++recordIndex;
-
-            if (sequence.size() >= chunkTargetBytes) {
-                processFastxQueryChunk(
-                    sequence,
-                    ranges,
-                    report.summary,
-                    [&report](
-                        const FastxRecordRange& range,
-                        const std::vector<uint8_t>& hits,
-                        uint64_t kmers,
-                        uint64_t positiveKmers
-                    ) {
-                        std::vector<uint8_t> recordHits;
-                        if (kmers != 0) {
-                            const auto begin = hits.begin() + static_cast<ptrdiff_t>(range.offset);
-                            recordHits.assign(begin, begin + static_cast<ptrdiff_t>(kmers));
-                        }
-                        report.records.push_back(
-                            FastxDetailedQueryRecord{
-                                range.recordIndex,
-                                range.size,
-                                range.validKmers,
-                                positiveKmers,
-                                std::move(recordHits),
-                            }
-                        );
-                    },
-                    stream
-                );
-                sequence.clear();
-                ranges.clear();
-            }
-        }
-
-        if (!sequence.empty()) {
-            processFastxQueryChunk(
-                sequence,
-                ranges,
-                report.summary,
-                [&report](
-                    const FastxRecordRange& range,
-                    const std::vector<uint8_t>& hits,
-                    uint64_t kmers,
-                    uint64_t positiveKmers
-                ) {
-                    std::vector<uint8_t> recordHits;
-                    if (kmers != 0) {
-                        const auto begin = hits.begin() + static_cast<ptrdiff_t>(range.offset);
-                        recordHits.assign(begin, begin + static_cast<ptrdiff_t>(kmers));
-                    }
-                    report.records.push_back(
-                        FastxDetailedQueryRecord{
-                            range.recordIndex,
-                            range.size,
-                            range.validKmers,
-                            positiveKmers,
-                            std::move(recordHits),
-                        }
-                    );
-                },
-                stream
-            );
-        }
+        report.summary = queryFastxRecordsStream(
+            input,
+            sourceName,
+            [&report](const FastxQueryRecordView& record) {
+                report.records.push_back(FastxDetailedQueryRecord{
+                    record.recordIndex,
+                    std::string(record.header),
+                    std::string(record.sequence),
+                    record.queriedBases,
+                    record.queriedKmers,
+                    record.positiveKmers,
+                    std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
+                });
+            },
+            fillFraction,
+            stream
+        );
         return report;
     }
 

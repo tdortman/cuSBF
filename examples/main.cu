@@ -130,11 +130,13 @@ int runDemo(
         queriedRecords = report.recordsQueried;
     } else if (useGeneratedFastx) {
         std::istringstream queryFastx(makeFastqRecord("generated-query", sequence, 59));
-        const auto report = filter.queryFastxDetailed(queryFastx, fillFraction);
-        queryKmers = report.summary.queriedKmers;
-        positives = report.summary.positiveKmers;
-        queriedBases = report.summary.queriedBases;
-        queriedRecords = report.summary.recordsQueried;
+        const auto report = filter.queryFastxRecords(
+            queryFastx, [](const cusbf::FastxQueryRecordView&) {}, fillFraction
+        );
+        queryKmers = report.queriedKmers;
+        positives = report.positiveKmers;
+        queriedBases = report.queriedBases;
+        queriedRecords = report.recordsQueried;
     } else {
         const auto hits = filter.containsSequence(sequence);
         queryKmers = hits.size();
