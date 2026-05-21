@@ -81,7 +81,7 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsParsesWrappedFastqWithCrLf) {
     std::vector<StreamedRecord> records;
     const auto summary = filter.queryFastxFileRecords(
         file.path,
-        [&](const cusbf::FastxQueryRecordView& record) {
+        [&](const cusbf::FastxRecordView& record) {
             records.push_back(StreamedRecord{
                 record.recordIndex,
                 std::string(record.header),
@@ -144,13 +144,13 @@ TEST_F(BloomFilterTest, RecordBatchInsertAndQueryInjectRecordBoundaries) {
     const std::string sequenceA = "ACGTACGT";
     const std::string sequenceB = "TGCATGCA";
     const std::string denseSequence = sequenceA + sequenceB;
-    const std::vector<cusbf::BioSequenceRecordRange> ranges{
+    const std::vector<cusbf::RecordRange> ranges{
         {0, sequenceA.size()},
         {sequenceA.size(), sequenceB.size()},
     };
-    const auto batch = cusbf::BioSequenceBatchView{
+    const auto batch = cusbf::RecordBatchView{
         denseSequence,
-        cuda::std::span<const cusbf::BioSequenceRecordRange>{ranges.data(), ranges.size()},
+        cuda::std::span<const cusbf::RecordRange>{ranges.data(), ranges.size()},
     };
 
     const auto insertReport = filter.insertRecordBatch(batch);
@@ -158,7 +158,7 @@ TEST_F(BloomFilterTest, RecordBatchInsertAndQueryInjectRecordBoundaries) {
     std::vector<StreamedRecord> records;
     const auto summary = filter.queryRecordBatch(
         batch,
-        [&](const cusbf::BioSequenceQueryRecordView& record) {
+        [&](const cusbf::RecordQueryView& record) {
             records.push_back(StreamedRecord{
                 record.recordIndex,
                 {},
@@ -231,7 +231,7 @@ TEST_F(BloomFilterTest, TripletQueryFastxFileRecordsDoesNotCreateCrossRecordKmer
     std::vector<StreamedRecord> records;
     const auto summary = filter.queryFastxFileRecords(
         file.path,
-        [&](const cusbf::FastxQueryRecordView& record) {
+        [&](const cusbf::FastxRecordView& record) {
             records.push_back(StreamedRecord{
                 record.recordIndex,
                 std::string(record.header),
@@ -375,7 +375,7 @@ TEST_F(BloomFilterTest, QueryFastxRecordsPreservesWrappedFastaRecordOrder) {
     std::vector<StreamedRecord> records;
     const auto summary = filter.queryFastxRecords(
         input,
-        [&](const cusbf::FastxQueryRecordView& record) {
+        [&](const cusbf::FastxRecordView& record) {
             records.push_back(StreamedRecord{
                 record.recordIndex,
                 std::string(record.header),
@@ -501,7 +501,7 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsReportInvalidWindowsAsMisses) {
     std::vector<StreamedRecord> records;
     const auto summary = filter.queryFastxFileRecords(
         file.path,
-        [&](const cusbf::FastxQueryRecordView& record) {
+        [&](const cusbf::FastxRecordView& record) {
             records.push_back(StreamedRecord{
                 record.recordIndex,
                 std::string(record.header),

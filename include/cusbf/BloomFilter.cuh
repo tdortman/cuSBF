@@ -532,7 +532,7 @@ class Filter {
      * @return Report summarising records indexed, bases processed, and k-mers inserted.
      */
     [[nodiscard]] FastxInsertReport
-    insertRecordBatch(BioSequenceBatchView batch, cuda::stream_ref stream = cudaStream_t{}) {
+    insertRecordBatch(RecordBatchView batch, cuda::stream_ref stream = cudaStream_t{}) {
         const PreparedRecordBatch prepared = prepareRecordBatch(batch);
         FastxInsertReport report;
         report.recordsIndexed = prepared.records.size();
@@ -655,14 +655,14 @@ class Filter {
      * @return Aggregate query summary for the whole batch.
      */
     [[nodiscard]] FastxQueryReport
-    queryRecordBatch(BioSequenceBatchView batch, cuda::stream_ref stream = cudaStream_t{}) const {
-        return queryRecordBatch(batch, [](const BioSequenceQueryRecordView&) {}, stream);
+    queryRecordBatch(RecordBatchView batch, cuda::stream_ref stream = cudaStream_t{}) const {
+        return queryRecordBatch(batch, [](const RecordQueryView&) {}, stream);
     }
 
     /**
      * @brief Queries a dense host-resident record batch and streams per-record results.
      *
-     * The callback receives one @ref BioSequenceQueryRecordView per input record in source
+     * The callback receives one @ref RecordQueryView per input record in source
      * order. The hit span remains valid only for the duration of the callback.
      *
      * Synchronises before returning.
@@ -674,7 +674,7 @@ class Filter {
      */
     template <typename Consumer>
     [[nodiscard]] FastxQueryReport queryRecordBatch(
-        BioSequenceBatchView batch,
+        RecordBatchView batch,
         Consumer&& consume,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
@@ -884,9 +884,9 @@ class Filter {
         sequence.append(Config::symbolWidth, static_cast<char>(Config::Alphabet::separator));
     }
 
-    static void validateRecordBatch(BioSequenceBatchView batch) {
+    static void validateRecordBatch(RecordBatchView batch) {
         uint64_t nextOffset = 0;
-        for (const BioSequenceRecordRange& record : batch.records) {
+        for (const RecordRange& record : batch.records) {
             if (record.sequenceOffset < nextOffset) {
                 throw std::invalid_argument(
                     "record batch ranges must be ordered and non-overlapping"
@@ -927,7 +927,7 @@ class Filter {
         });
     }
 
-    [[nodiscard]] static PreparedRecordBatch prepareRecordBatch(BioSequenceBatchView batch) {
+    [[nodiscard]] static PreparedRecordBatch prepareRecordBatch(RecordBatchView batch) {
         validateRecordBatch(batch);
 
         PreparedRecordBatch prepared;
@@ -937,7 +937,7 @@ class Filter {
         prepared.records.reserve(batch.records.size());
 
         for (uint64_t recordIndex = 0; recordIndex < batch.records.size(); ++recordIndex) {
-            const BioSequenceRecordRange& record = batch.records[recordIndex];
+            const RecordRange& record = batch.records[recordIndex];
             appendPreparedRecord(
                 prepared.sequence,
                 prepared.records,
@@ -949,13 +949,13 @@ class Filter {
         return prepared;
     }
 
-    [[nodiscard]] static BioSequenceBatchView makeBatchView(
+    [[nodiscard]] static RecordBatchView makeBatchView(
         const std::string& sequence,
-        const std::vector<BioSequenceRecordRange>& ranges
+        const std::vector<RecordRange>& ranges
     ) {
-        return BioSequenceBatchView{
+        return RecordBatchView{
             sequence,
-            cuda::std::span<const BioSequenceRecordRange>{ranges.data(), ranges.size()},
+            cuda::std::span<const RecordRange>{ranges.data(), ranges.size()},
         };
     }
 
@@ -992,7 +992,7 @@ class Filter {
             const auto sequence =
                 inputSequence.substr(static_cast<size_t>(record.inputOffset), static_cast<size_t>(record.size));
             if (kmers == 0) {
-                consume(BioSequenceQueryRecordView{
+                consume(RecordQueryView{
                     record.recordIndex,
                     sequence,
                     record.size,
@@ -1008,7 +1008,7 @@ class Filter {
             const auto positiveKmers =
                 static_cast<uint64_t>(std::count(hitSpan.begin(), hitSpan.end(), uint8_t{1}));
             report.positiveKmers += positiveKmers;
-            consume(BioSequenceQueryRecordView{
+            consume(RecordQueryView{
                 record.recordIndex,
                 sequence,
                 record.size,
@@ -1039,7 +1039,7 @@ class Filter {
 
         std::string sequence;
         sequence.reserve(chunkTargetBytes);
-        std::vector<BioSequenceRecordRange> ranges;
+        std::vector<RecordRange> ranges;
         auto flush = [&]() {
             if (ranges.empty()) {
                 return;
@@ -1050,7 +1050,7 @@ class Filter {
         };
 
         while (reader.nextRecord(record)) {
-            ranges.push_back(BioSequenceRecordRange{
+            ranges.push_back(RecordRange{
                 static_cast<uint64_t>(sequence.size()),
                 static_cast<uint64_t>(record.sequence.size()),
             });
@@ -1072,7 +1072,7 @@ class Filter {
         cuda::stream_ref stream
     ) const {
         return queryFastxRecordsStream(
-            input, sourceName, [](const FastxQueryRecordView&) {}, fillFraction, stream
+            input, sourceName, [](const FastxRecordView&) {}, fillFraction, stream
         );
     }
 
@@ -1096,7 +1096,7 @@ class Filter {
 
         std::string sequence;
         sequence.reserve(chunkTargetBytes);
-        std::vector<BioSequenceRecordRange> ranges;
+        std::vector<RecordRange> ranges;
         std::vector<detail::FastxRecord> records;
         uint64_t recordIndexBase = 0;
 
@@ -1106,10 +1106,10 @@ class Filter {
             }
             const FastxQueryReport chunkReport = queryRecordBatch(
                 makeBatchView(sequence, ranges),
-                [&](const BioSequenceQueryRecordView& recordView) {
+                [&](const RecordQueryView& recordView) {
                     const detail::FastxRecord& fastxRecord =
                         records[static_cast<size_t>(recordView.recordIndex)];
-                    consume(FastxQueryRecordView{
+                    consume(FastxRecordView{
                         recordIndexBase + recordView.recordIndex,
                         fastxRecord.header,
                         fastxRecord.sequence,
@@ -1129,7 +1129,7 @@ class Filter {
         };
 
         while (reader.nextRecord(record)) {
-            ranges.push_back(BioSequenceRecordRange{
+            ranges.push_back(RecordRange{
                 static_cast<uint64_t>(sequence.size()),
                 static_cast<uint64_t>(record.sequence.size()),
             });
@@ -1155,7 +1155,7 @@ class Filter {
         report.summary = queryFastxRecordsStream(
             input,
             sourceName,
-            [&report](const FastxQueryRecordView& record) {
+            [&report](const FastxRecordView& record) {
                 report.records.push_back(FastxDetailedQueryRecord{
                     record.recordIndex,
                     std::string(record.header),

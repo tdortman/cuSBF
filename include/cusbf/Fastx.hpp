@@ -17,19 +17,19 @@
 namespace cusbf {
 
 /// @brief Ordered non-overlapping byte range for one record inside a dense sequence batch.
-struct BioSequenceRecordRange {
+struct RecordRange {
     uint64_t sequenceOffset{};
     uint64_t sequenceBytes{};
 };
 
 /// @brief Dense host-resident sequence batch plus explicit record boundaries.
-struct BioSequenceBatchView {
+struct RecordBatchView {
     std::string_view sequence{};
-    cuda::std::span<const BioSequenceRecordRange> records{};
+    cuda::std::span<const RecordRange> records{};
 };
 
 /// @brief Per-record query payload emitted by queryRecordBatch().
-struct BioSequenceQueryRecordView {
+struct RecordQueryView {
     uint64_t recordIndex{};
     std::string_view sequence{};
     uint64_t queriedBases{};
@@ -54,7 +54,7 @@ struct FastxQueryReport {
 };
 
 /// @brief Per-record query payload emitted by FASTX streaming query APIs.
-struct FastxQueryRecordView {
+struct FastxRecordView {
     uint64_t recordIndex{};
     std::string_view header{};
     std::string_view sequence{};

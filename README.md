@@ -124,16 +124,16 @@ filter.containsSequenceDevice(
 
 // Dense record batch API: one concatenated payload plus explicit record ranges.
 std::string batchSequence = "ACGTACGTTGCATGCA";
-std::vector<cusbf::BioSequenceRecordRange> batchRanges{
+std::vector<cusbf::RecordRange> batchRanges{
     {0, 8},
     {8, 8},
 };
 auto batchSummary = filter.queryRecordBatch(
     {
         batchSequence,
-        cuda::std::span<const cusbf::BioSequenceRecordRange>{batchRanges.data(), batchRanges.size()},
+        cuda::std::span<const cusbf::RecordRange>{batchRanges.data(), batchRanges.size()},
     },
-    [](const cusbf::BioSequenceQueryRecordView& record) {
+    [](const cusbf::RecordQueryView& record) {
         // record.sequence is the original record, record.hits is one bool per k-mer
     }
 );
@@ -145,7 +145,7 @@ auto summary = filter.queryFastxFile("queries.fastq");
 // Streaming FASTX query emits each record as soon as its chunk completes
 auto streamed = filter.queryFastxFileRecords(
     "queries.fastq",
-    [](const cusbf::FastxQueryRecordView& record) {
+    [](const cusbf::FastxRecordView& record) {
         // record.header, record.sequence, record.queriedKmers, record.hits
     }
 );

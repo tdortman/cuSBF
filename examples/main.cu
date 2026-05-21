@@ -131,7 +131,7 @@ int runDemo(
     } else if (useGeneratedFastx) {
         std::istringstream queryFastx(makeFastqRecord("generated-query", sequence, 59));
         const auto report = filter.queryFastxRecords(
-            queryFastx, [](const cusbf::FastxQueryRecordView&) {}, fillFraction
+            queryFastx, [](const cusbf::FastxRecordView&) {}, fillFraction
         );
         queryKmers = report.queriedKmers;
         positives = report.positiveKmers;
