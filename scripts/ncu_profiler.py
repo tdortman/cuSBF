@@ -15,8 +15,8 @@ OPERATIONS = {
 
 KERNEL_PATTERNS = {
     "cusbf": {
-        "insert": ["insertSequenceKmersKernel"],
-        "query": ["containsSequenceKmersKernel"],
+        "insert": ["insert_sequence_kmers_kernel"],
+        "query": ["contains_sequence_kmers_kernel"],
     },
     "cucobloom": {
         "insert": ["add"],
