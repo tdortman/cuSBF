@@ -9,7 +9,7 @@
 #include <string>
 #include <string_view>
 
-#include <cusbf/BloomFilter.cuh>
+#include <cusbf/filter.cuh>
 
 std::string generateRandomDNA(uint64_t length, uint32_t seed) {
     static constexpr char bases[] = {'A', 'C', 'G', 'T'};
@@ -73,17 +73,17 @@ std::string makeFastqRecord(std::string_view name, std::string_view sequence, ui
 
 template <typename Config>
 int runDemo(
-    uint64_t filterBits,
+    uint64_t filter_bits,
     std::string_view sequence,
     std::string_view query,
-    std::string_view insertFastxPath,
-    std::string_view queryFastxPath,
+    std::string_view insert_fastx_path,
+    std::string_view query_fastx_path,
     bool useInsertFastx,
     bool useRawSequence,
     bool useGeneratedFastx,
-    double fillFraction
+    double fill_fraction
 ) {
-    cusbf::Filter<Config> filter(filterBits);
+    cusbf::filter<Config> filter(filter_bits);
 
     uint64_t inserted = 0;
     uint64_t queryKmers = 0;
@@ -94,51 +94,51 @@ int runDemo(
     uint64_t queriedRecords = 0;
 
     if (useInsertFastx) {
-        const auto report = filter.insertFastxFile(insertFastxPath, fillFraction);
+        const auto report = filter.insert_fastx_file(insert_fastx_path, fill_fraction);
         inserted = report.insertedKmers;
         insertedBases = report.indexedBases;
         insertedRecords = report.recordsIndexed;
     } else if (useRawSequence) {
-        inserted = filter.insertSequence(sequence);
+        inserted = filter.insert_sequence(sequence);
         insertedBases = sequence.size();
         insertedRecords = 1;
     } else {
         std::istringstream inputFastx(makeFastaRecord("generated-insert", sequence, 73));
-        const auto report = filter.insertFastx(inputFastx, fillFraction);
+        const auto report = filter.insert_fastx(inputFastx, fill_fraction);
         inserted = report.insertedKmers;
         insertedBases = report.indexedBases;
         insertedRecords = report.recordsIndexed;
     }
 
-    if (!queryFastxPath.empty()) {
-        const auto report = filter.queryFastxFile(queryFastxPath, fillFraction);
+    if (!query_fastx_path.empty()) {
+        const auto report = filter.query_fastx_file(query_fastx_path, fill_fraction);
         queryKmers = report.queriedKmers;
-        positives = report.positiveKmers;
+        positives = report.positive_kmers;
         queriedBases = report.queriedBases;
         queriedRecords = report.recordsQueried;
     } else if (!query.empty()) {
-        const auto hits = filter.containsSequence(query);
+        const auto hits = filter.contains_sequence(query);
         queryKmers = hits.size();
         positives = std::count(hits.begin(), hits.end(), uint8_t{1});
         queriedBases = query.size();
         queriedRecords = 1;
     } else if (useInsertFastx) {
-        const auto report = filter.queryFastxFile(insertFastxPath, fillFraction);
+        const auto report = filter.query_fastx_file(insert_fastx_path, fill_fraction);
         queryKmers = report.queriedKmers;
-        positives = report.positiveKmers;
+        positives = report.positive_kmers;
         queriedBases = report.queriedBases;
         queriedRecords = report.recordsQueried;
     } else if (useGeneratedFastx) {
-        std::istringstream queryFastx(makeFastqRecord("generated-query", sequence, 59));
-        const auto report = filter.queryFastxRecords(
-            queryFastx, [](const cusbf::FastxRecordView&) {}, fillFraction
+        std::istringstream query_fastx(makeFastqRecord("generated-query", sequence, 59));
+        const auto report = filter.query_fastx_records(
+            query_fastx, [](const cusbf::FastxRecordView&) {}, fill_fraction
         );
         queryKmers = report.queriedKmers;
-        positives = report.positiveKmers;
+        positives = report.positive_kmers;
         queriedBases = report.queriedBases;
         queriedRecords = report.recordsQueried;
     } else {
-        const auto hits = filter.containsSequence(sequence);
+        const auto hits = filter.contains_sequence(sequence);
         queryKmers = hits.size();
         positives = std::count(hits.begin(), hits.end(), uint8_t{1});
         queriedBases = sequence.size();
@@ -155,7 +155,7 @@ int runDemo(
     std::cout << "Query k-mers: " << queryKmers << "\n";
     std::cout << "Positive k-mers: " << positives << "\n";
     std::cout << "\n";
-    std::cout << "Load factor: " << filter.loadFactor() << "\n";
+    std::cout << "Load factor: " << filter.load_factor() << "\n";
     return 0;
 }
 
@@ -168,12 +168,12 @@ int main(int argc, char** argv) {
     std::string sequence;
     std::string query;
     std::string mode = "dna";
-    std::string insertFastxPath;
-    std::string queryFastxPath;
-    uint64_t filterBits = 1ULL << 24;
+    std::string insert_fastx_path;
+    std::string query_fastx_path;
+    uint64_t filter_bits = 1ULL << 24;
     uint64_t sequenceLength = 1ULL << 16;
     uint32_t seed = 42;
-    double fillFraction = 0.7;
+    double fill_fraction = 0.7;
 
     auto* sequenceOption = app.add_option(
         "sequence",
@@ -183,31 +183,31 @@ int main(int argc, char** argv) {
     );
     auto* queryOption =
         app.add_option("query", query, "Raw sequence to query (defaults to the inserted input)");
-    auto* insertFastxOption =
-        app.add_option("--insert-fastx", insertFastxPath, "FASTA/FASTQ file to insert");
-    auto* queryFastxOption =
-        app.add_option("--query-fastx", queryFastxPath, "FASTA/FASTQ file to query");
+    auto* insert_fastxOption =
+        app.add_option("--insert-fastx", insert_fastx_path, "FASTA/FASTQ file to insert");
+    auto* query_fastxOption =
+        app.add_option("--query-fastx", query_fastx_path, "FASTA/FASTQ file to query");
     app.add_option("--length", sequenceLength, "Generate a random sequence of this length")
         ->default_val(sequenceLength);
     app.add_option("--seed", seed, "Random seed for generated sequence")->default_val(seed);
     app.add_option("--mode", mode, "Input alphabet mode: dna or protein")
         ->check(CLI::IsMember({"dna", "protein"}))
         ->default_val(mode);
-    app.add_option("--filter-bits", filterBits, "Total cuSBF bits before power-of-two rounding")
-        ->default_val(filterBits);
+    app.add_option("--filter-bits", filter_bits, "Total cuSBF bits before power-of-two rounding")
+        ->default_val(filter_bits);
     app.add_option(
            "--fill-fraction",
-           fillFraction,
+           fill_fraction,
            "Fraction of free GPU memory to fill per FASTX chunk (default 0.7)"
     )
-        ->default_val(fillFraction);
+        ->default_val(fill_fraction);
 
-    insertFastxOption->excludes(sequenceOption);
-    queryFastxOption->excludes(queryOption);
+    insert_fastxOption->excludes(sequenceOption);
+    query_fastxOption->excludes(queryOption);
 
     CLI11_PARSE(app, argc, argv);
 
-    const bool useInsertFastx = !insertFastxPath.empty();
+    const bool useInsertFastx = !insert_fastx_path.empty();
     const bool useRawSequence = !useInsertFastx && !sequence.empty();
     const bool useGeneratedFastx = !useInsertFastx && !useRawSequence;
 
@@ -219,27 +219,27 @@ int main(int argc, char** argv) {
     try {
         if (mode == "protein") {
             return runDemo<ProteinConfig>(
-                filterBits,
+                filter_bits,
                 sequence,
                 query,
-                insertFastxPath,
-                queryFastxPath,
+                insert_fastx_path,
+                query_fastx_path,
                 useInsertFastx,
                 useRawSequence,
                 useGeneratedFastx,
-                fillFraction
+                fill_fraction
             );
         }
         return runDemo<Config>(
-            filterBits,
+            filter_bits,
             sequence,
             query,
-            insertFastxPath,
-            queryFastxPath,
+            insert_fastx_path,
+            query_fastx_path,
             useInsertFastx,
             useRawSequence,
             useGeneratedFastx,
-            fillFraction
+            fill_fraction
         );
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
