@@ -28,13 +28,13 @@ struct RecordBatchView {
     cuda::std::span<const RecordRange> records{};
 };
 
-/// @brief Per-record query payload emitted by queryRecordBatch().
+/// @brief Per-record query payload emitted by query_record_batch().
 struct RecordQueryView {
-    uint64_t recordIndex{};
+    uint64_t record_index{};
     std::string_view sequence{};
     uint64_t queriedBases{};
     uint64_t queriedKmers{};
-    uint64_t positiveKmers{};
+    uint64_t positive_kmers{};
     cuda::std::span<const uint8_t> hits{};
 };
 
@@ -50,28 +50,28 @@ struct FastxQueryReport {
     uint64_t recordsQueried{};
     uint64_t queriedBases{};
     uint64_t queriedKmers{};
-    uint64_t positiveKmers{};
+    uint64_t positive_kmers{};
 };
 
 /// @brief Per-record query payload emitted by FASTX streaming query APIs.
 struct FastxRecordView {
-    uint64_t recordIndex{};
+    uint64_t record_index{};
     std::string_view header{};
     std::string_view sequence{};
     uint64_t queriedBases{};
     uint64_t queriedKmers{};
-    uint64_t positiveKmers{};
+    uint64_t positive_kmers{};
     cuda::std::span<const uint8_t> hits{};
 };
 
 /// @brief Detailed per-record query results returned by Filter FASTX detail APIs.
 struct FastxDetailedQueryRecord {
-    uint64_t recordIndex{};
+    uint64_t record_index{};
     std::string header;
     std::string sequence;
     uint64_t queriedBases{};
     uint64_t queriedKmers{};
-    uint64_t positiveKmers{};
+    uint64_t positive_kmers{};
     std::vector<uint8_t> hits;
 };
 
@@ -112,8 +112,8 @@ inline void trimTrailingCarriageReturn(std::string& line) {
  */
 class FastxReader {
    public:
-    explicit FastxReader(std::istream& input, std::string_view sourceName = "<stream>")
-        : input_(input), sourceName_(sourceName) {
+    explicit FastxReader(std::istream& input, std::string_view source_name = "<stream>")
+        : input_(input), source_name_(source_name) {
     }
 
     [[nodiscard]] bool nextRecord(FastxRecord& record) {
@@ -153,7 +153,7 @@ class FastxReader {
 
    private:
     std::istream& input_;
-    std::string_view sourceName_;
+    std::string_view source_name_;
     std::string pendingHeader_;
     std::string lineBuffer_;
     FastxFormat format_{FastxFormat::unknown};
@@ -161,7 +161,7 @@ class FastxReader {
 
     [[noreturn]] void throwParseError(std::string_view message) const {
         throw std::runtime_error(
-            std::string(sourceName_) + ":" + std::to_string(lineNumber_) + ": " +
+            std::string(source_name_) + ":" + std::to_string(lineNumber_) + ": " +
             std::string(message)
         );
     }
@@ -183,7 +183,7 @@ class FastxReader {
 
         if (input_.bad()) {
             throw std::runtime_error(
-                std::string("Failed to read FASTA/FASTQ input from ") + std::string(sourceName_)
+                std::string("Failed to read FASTA/FASTQ input from ") + std::string(source_name_)
             );
         }
         return {};
@@ -202,7 +202,7 @@ class FastxReader {
 
         if (input_.bad()) {
             throw std::runtime_error(
-                std::string("Failed to read FASTA/FASTQ input from ") + std::string(sourceName_)
+                std::string("Failed to read FASTA/FASTQ input from ") + std::string(source_name_)
             );
         }
     }
@@ -220,7 +220,7 @@ class FastxReader {
 
         if (input_.bad()) {
             throw std::runtime_error(
-                std::string("Failed to read FASTA/FASTQ input from ") + std::string(sourceName_)
+                std::string("Failed to read FASTA/FASTQ input from ") + std::string(source_name_)
             );
         }
         throwParseError("unterminated FASTQ record: missing '+' separator");
@@ -242,7 +242,7 @@ class FastxReader {
         }
         if (input_.bad()) {
             throw std::runtime_error(
-                std::string("Failed to read FASTA/FASTQ input from ") + std::string(sourceName_)
+                std::string("Failed to read FASTA/FASTQ input from ") + std::string(source_name_)
             );
         }
         throwParseError("FASTQ quality length does not match sequence length");

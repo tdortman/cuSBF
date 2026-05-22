@@ -7,32 +7,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <stdexcept>
-#include <string>
 
-namespace cusbf {
-
-/**
- * @brief Exception thrown on CUDA runtime errors.
- */
-class CudaError : public std::runtime_error {
-   public:
-    CudaError(cudaError_t code, const char* file, int line)
-        : std::runtime_error(
-              std::string(file) + ":" + std::to_string(line) + " " + cudaGetErrorString(code)
-          ),
-          code_(code) {
-    }
-
-    [[nodiscard]] cudaError_t code() const noexcept {
-        return code_;
-    }
-
-   private:
-    cudaError_t code_;
-};
-
-}  // namespace cusbf
+#include <cusbf/cuda_error.hpp>
 
 namespace cusbf::detail {
 
@@ -124,19 +100,6 @@ __device__ __forceinline__ uint64_t warpReduceOr(uint32_t peers, uint64_t value)
     return value;
 #endif
 }
-
-/**
- * @brief Macro for checking CUDA errors.
- * Throws cusbf::CudaError on failure.
- */
-#define CUSBF_CUDA_CALL(err)                              \
-    do {                                                  \
-        cudaError_t err_ = (err);                         \
-        if (err_ == cudaSuccess) [[likely]] {             \
-            break;                                        \
-        }                                                 \
-        throw cusbf::CudaError(err_, __FILE__, __LINE__); \
-    } while (0)
 
 /**
  * @brief Calculates the maximum occupancy grid size for a kernel.

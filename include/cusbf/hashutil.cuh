@@ -206,7 +206,7 @@ constexpr __host__ __device__ __forceinline__ uint64_t hash64(uint64_t key) {
  */
 // sufficient for minimizer (shard) selection where only uniformity matters,
 // not full avalanche quality.
-constexpr __host__ __device__ __forceinline__ uint64_t minimizerHash64(uint64_t key) {
+constexpr __host__ __device__ __forceinline__ uint64_t minimizer_hash64(uint64_t key) {
     return key * 0x9E3779B97F4A7C15ULL;
 }
 
