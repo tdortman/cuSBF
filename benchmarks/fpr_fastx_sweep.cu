@@ -18,8 +18,8 @@
 #include <unistd.h>
 
 #include <cuco/bloom_filter.cuh>
-#include <cusbf/BloomFilter.cuh>
 #include <cusbf/device_span.cuh>
+#include <cusbf/filter.cuh>
 #include <cusbf/helpers.cuh>
 #include <cusbf/superbloom_ffi.hpp>
 
@@ -28,7 +28,7 @@
 namespace bm = benchmark;
 
 struct FastxData {
-    thrust::device_vector<char> d_insertSequence;
+    thrust::device_vector<char> d_insert_sequence;
     uint64_t insertKmers = 0;
 
     thrust::device_vector<char> d_querySequence;
@@ -36,8 +36,8 @@ struct FastxData {
 
     // CPU SuperBloom parallelizes one thread per FASTX record, so keep an
     // explicit FASTA stream with a user-controlled record count.
-    std::string queryFastxPath;
-    uint64_t queryFastxKmers = 0;
+    std::string query_fastx_path;
+    uint64_t query_fastxKmers = 0;
 
     // Pre-encoded packed k-mers for Cuco
     thrust::device_vector<uint64_t> d_insertPackedKmers;
@@ -45,7 +45,7 @@ struct FastxData {
 };
 
 static std::unique_ptr<FastxData> g_fastxData;
-static std::string g_insertFastxPath;
+static std::string g_insert_fastx_path;
 
 static constexpr uint64_t kQueryLength = 1'000'000'000ULL;
 static constexpr uint64_t kQuerySeed = 0xDEADBEEF;
@@ -99,7 +99,7 @@ static void prepareFastxData() {
     if (g_fastxData) {
         return;
     }
-    if (g_insertFastxPath.empty()) {
+    if (g_insert_fastx_path.empty()) {
         std::cerr << "Error: --insert-fastx is required" << std::endl;
         std::exit(1);
     }
@@ -107,15 +107,15 @@ static void prepareFastxData() {
     g_fastxData = std::make_unique<FastxData>();
 
     // Read insert FASTX
-    std::vector<char> hostInsert = benchmark_common::readFastxConcatenated(g_insertFastxPath);
+    std::vector<char> hostInsert = benchmark_common::readFastxConcatenated(g_insert_fastx_path);
     if (hostInsert.empty()) {
         std::cerr << "Error: FASTX file is empty or contains no sequences" << std::endl;
         std::exit(1);
     }
 
-    g_fastxData->d_insertSequence.resize(hostInsert.size());
+    g_fastxData->d_insert_sequence.resize(hostInsert.size());
     CUSBF_CUDA_CALL(cudaMemcpy(
-        thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
+        thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
         hostInsert.data(),
         hostInsert.size(),
         cudaMemcpyHostToDevice
@@ -161,13 +161,13 @@ static void prepareFastxData() {
         cudaMemcpyHostToDevice
     ));
     g_fastxData->queryKmers = hostConcat.size() >= 31 ? hostConcat.size() - 31 + 1 : 0;
-    g_fastxData->queryFastxPath =
-        writeGeneratedQueryFasta(hostFullQuery, g_numQueryRecords, g_fastxData->queryFastxKmers);
+    g_fastxData->query_fastx_path =
+        writeGeneratedQueryFasta(hostFullQuery, g_numQueryRecords, g_fastxData->query_fastxKmers);
 
     // Pre-encode packed k-mers for Cuco
     g_fastxData->d_insertPackedKmers.resize(g_fastxData->insertKmers);
     benchmark_common::gpuEncodePackedKmers<31>(
-        thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
+        thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
         hostInsert.size(),
         thrust::raw_pointer_cast(g_fastxData->d_insertPackedKmers.data())
     );
@@ -184,18 +184,18 @@ static void prepareFastxData() {
 
 static void setFprFastxCounters(
     bm::State& state,
-    uint64_t filterBits,
+    uint64_t filter_bits,
     uint64_t memoryBytes,
     uint64_t insertKmers,
     uint64_t queryKmers
 ) {
-    state.counters["filter_bits"] = bm::Counter(static_cast<double>(filterBits));
+    state.counters["filter_bits"] = bm::Counter(static_cast<double>(filter_bits));
     state.counters["memory_bytes"] =
         bm::Counter(static_cast<double>(memoryBytes), bm::Counter::kDefaults, bm::Counter::kIs1024);
     state.counters["insert_kmers"] = bm::Counter(static_cast<double>(insertKmers));
     state.counters["query_kmers"] = bm::Counter(static_cast<double>(queryKmers));
     state.counters["bits_per_item"] = bm::Counter(
-        insertKmers > 0 ? static_cast<double>(filterBits) / static_cast<double>(insertKmers) : 0.0
+        insertKmers > 0 ? static_cast<double>(filter_bits) / static_cast<double>(insertKmers) : 0.0
     );
 }
 
@@ -208,9 +208,9 @@ class CuSbfFprFastxFixture : public bm::Fixture {
     void SetUp(const bm::State& state) override {
         prepareFastxData();
 
-        filterBits = static_cast<uint64_t>(state.range(0));
-        filter = std::make_unique<cusbf::Filter<Config>>(filterBits);
-        filterMemory = filter->filterBits() / 8;
+        filter_bits = static_cast<uint64_t>(state.range(0));
+        filter = std::make_unique<cusbf::filter<Config>>(filter_bits);
+        filterMemory = filter->filter_bits() / 8;
 
         d_output.resize(g_fastxData->queryKmers);
     }
@@ -221,10 +221,10 @@ class CuSbfFprFastxFixture : public bm::Fixture {
         d_output.shrink_to_fit();
     }
 
-    uint64_t filterBits = 0;
+    uint64_t filter_bits = 0;
     uint64_t filterMemory = 0;
     thrust::device_vector<uint8_t> d_output;
-    std::unique_ptr<cusbf::Filter<Config>> filter;
+    std::unique_ptr<cusbf::filter<Config>> filter;
     benchmark_common::GPUTimer timer;
 };
 
@@ -257,10 +257,10 @@ class CucoBloomFprFastxFixture : public bm::Fixture {
     void SetUp(const bm::State& state) override {
         prepareFastxData();
 
-        filterBits = static_cast<uint64_t>(state.range(0));
+        filter_bits = static_cast<uint64_t>(state.range(0));
         constexpr auto bitsPerBlock =
             CucoBloom::words_per_block * sizeof(typename CucoBloom::word_type) * 8;
-        uint64_t blocks = cuda::ceil_div(filterBits, bitsPerBlock);
+        uint64_t blocks = cuda::ceil_div(filter_bits, bitsPerBlock);
         if (blocks == 0) {
             blocks = 1;
         }
@@ -278,7 +278,7 @@ class CucoBloomFprFastxFixture : public bm::Fixture {
         d_output.shrink_to_fit();
     }
 
-    uint64_t filterBits = 0;
+    uint64_t filter_bits = 0;
     uint64_t actualFilterBits = 0;
     uint64_t filterMemory = 0;
     thrust::device_vector<uint8_t> d_output;
@@ -294,19 +294,19 @@ class SuperBloomCpuFprFastxFixture : public bm::Fixture {
     void SetUp(const bm::State& state) override {
         prepareFastxData();
 
-        filterBits = static_cast<uint64_t>(state.range(0));
+        filter_bits = static_cast<uint64_t>(state.range(0));
 
         // Copy insert sequence to host
-        h_insertSequence.resize(g_fastxData->d_insertSequence.size());
+        h_insert_sequence.resize(g_fastxData->d_insert_sequence.size());
         CUSBF_CUDA_CALL(cudaMemcpy(
-            h_insertSequence.data(),
-            thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
-            g_fastxData->d_insertSequence.size(),
+            h_insert_sequence.data(),
+            thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
+            g_fastxData->d_insert_sequence.size(),
             cudaMemcpyDeviceToHost
         ));
 
-        // Compute CPU filter exponents from requested filterBits
-        uint64_t targetBits = std::max(filterBits, uint64_t{1} << 22);
+        // Compute CPU filter exponents from requested filter_bits
+        uint64_t targetBits = std::max(filter_bits, uint64_t{1} << 22);
         bitExp_ = static_cast<uint8_t>(cuda::std::bit_width(targetBits) - 1);
         blockExp_ = 9;
 
@@ -318,7 +318,7 @@ class SuperBloomCpuFprFastxFixture : public bm::Fixture {
             superbloom_destroy(handle_);
         }
         handle_ = nullptr;
-        h_insertSequence.clear();
+        h_insert_sequence.clear();
     }
 
     void createFilter() {
@@ -337,30 +337,30 @@ class SuperBloomCpuFprFastxFixture : public bm::Fixture {
         }
     }
 
-    uint64_t filterBits = 0;
+    uint64_t filter_bits = 0;
     uint64_t actualFilterBits = 0;
     uint64_t filterMemory = 0;
     uint8_t bitExp_ = 0;
     uint8_t blockExp_ = 0;
     void* handle_ = nullptr;
-    std::vector<char> h_insertSequence;
+    std::vector<char> h_insert_sequence;
     benchmark_common::CPUTimer timer;
 };
 
 template <typename Fixture>
 void runCuSbfFprFastxBenchmark(Fixture& fixture, bm::State& state) {
     fixture.filter->clear();
-    benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
+    benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
         cusbf::device_span<const char>{
-            thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
-            g_fastxData->d_insertSequence.size()
+            thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
+            g_fastxData->d_insert_sequence.size()
         }
     ));
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fixture.timer.start();
-        fixture.filter->containsSequenceDevice(
+        fixture.filter->contains_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(g_fastxData->d_querySequence.data()),
                 g_fastxData->d_querySequence.size()
@@ -380,7 +380,7 @@ void runCuSbfFprFastxBenchmark(Fixture& fixture, bm::State& state) {
 
     setFprFastxCounters(
         state,
-        fixture.filter->filterBits(),
+        fixture.filter->filter_bits(),
         fixture.filterMemory,
         g_fastxData->insertKmers,
         g_fastxData->queryKmers
@@ -430,8 +430,8 @@ void runSuperBloomCpuFprFastxBenchmark(SuperBloomCpuFprFastxFixture& fixture, bm
 
     superbloom_insert_sequence(
         fixture.handle_,
-        reinterpret_cast<const uint8_t*>(fixture.h_insertSequence.data()),
-        fixture.h_insertSequence.size()
+        reinterpret_cast<const uint8_t*>(fixture.h_insert_sequence.data()),
+        fixture.h_insert_sequence.size()
     );
     superbloom_freeze(fixture.handle_);
 
@@ -439,7 +439,7 @@ void runSuperBloomCpuFprFastxBenchmark(SuperBloomCpuFprFastxFixture& fixture, bm
     for (auto _ : state) {
         fixture.timer.start();
         const int64_t iterationPositives =
-            superbloom_query_fastx_path(fixture.handle_, g_fastxData->queryFastxPath.c_str());
+            superbloom_query_fastx_path(fixture.handle_, g_fastxData->query_fastx_path.c_str());
         if (iterationPositives < 0) {
             state.SkipWithError("superbloom_query_fastx_path failed");
             return;
@@ -454,9 +454,9 @@ void runSuperBloomCpuFprFastxBenchmark(SuperBloomCpuFprFastxFixture& fixture, bm
         fixture.actualFilterBits,
         fixture.filterMemory,
         g_fastxData->insertKmers,
-        g_fastxData->queryFastxKmers
+        g_fastxData->query_fastxKmers
     );
-    benchmark_common::setFprCounters(state, falsePositives, g_fastxData->queryFastxKmers);
+    benchmark_common::setFprCounters(state, falsePositives, g_fastxData->query_fastxKmers);
 }
 
 #define DEFINE_CUSBF_FPR_FASTX_BENCHMARK(S)                    \
@@ -501,13 +501,13 @@ void parseCustomArgs(int argc, char** argv, std::vector<char*>& benchmarkArgv) {
 
         constexpr const char* fastxPrefix = "--insert-fastx=";
         if (std::strncmp(arg.c_str(), fastxPrefix, std::strlen(fastxPrefix)) == 0) {
-            g_insertFastxPath = arg.substr(std::strlen(fastxPrefix));
+            g_insert_fastx_path = arg.substr(std::strlen(fastxPrefix));
             continue;
         }
         if (arg == "--insert-fastx") {
             if (i + 1 < argc) {
                 ++i;
-                g_insertFastxPath = argv[i];
+                g_insert_fastx_path = argv[i];
             } else {
                 std::cerr << "Missing value for --insert-fastx" << std::endl;
                 std::exit(1);

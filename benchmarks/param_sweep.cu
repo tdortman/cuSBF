@@ -12,8 +12,8 @@
 #include <string>
 #include <vector>
 
-#include <cusbf/BloomFilter.cuh>
 #include <cusbf/device_span.cuh>
+#include <cusbf/filter.cuh>
 #include <cusbf/helpers.cuh>
 
 #include "benchmark_common.cuh"
@@ -28,7 +28,7 @@ namespace bm = benchmark;
 #endif
 
 struct FastxInputData {
-    thrust::device_vector<char> d_insertSequence;
+    thrust::device_vector<char> d_insert_sequence;
     uint64_t insertKmers = 0;
 
     // Optional user-provided query sequence (used by Query benchmark)
@@ -44,15 +44,15 @@ static constexpr uint64_t kFprQueryLength = 1'000'000'000ULL;
 static constexpr uint64_t kFprQuerySeed = 0xDEADBEEF;
 
 static std::unique_ptr<FastxInputData> g_fastxData;
-static std::string g_insertFastxPath;
-static std::string g_queryFastxPath;
-static uint64_t g_filterBits = 0;
+static std::string g_insert_fastx_path;
+static std::string g_query_fastx_path;
+static uint64_t g_filter_bits = 0;
 
 static void prepareFastxData() {
     if (g_fastxData) {
         return;
     }
-    if (g_insertFastxPath.empty()) {
+    if (g_insert_fastx_path.empty()) {
         std::cerr << "Error: --insert-fastx is required" << std::endl;
         std::exit(1);
     }
@@ -61,16 +61,16 @@ static void prepareFastxData() {
 
     // Read insert FASTX
     std::vector<char> hostInsert = benchmark_common::readFastxConcatenated(
-        g_insertFastxPath, static_cast<char>(PARAM_SWEEP_ALPHABET::separator)
+        g_insert_fastx_path, static_cast<char>(PARAM_SWEEP_ALPHABET::separator)
     );
     if (hostInsert.empty()) {
         std::cerr << "Error: Insert FASTX file is empty or contains no sequences" << std::endl;
         std::exit(1);
     }
 
-    g_fastxData->d_insertSequence.resize(hostInsert.size());
+    g_fastxData->d_insert_sequence.resize(hostInsert.size());
     CUSBF_CUDA_CALL(cudaMemcpy(
-        thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
+        thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
         hostInsert.data(),
         hostInsert.size(),
         cudaMemcpyHostToDevice
@@ -79,9 +79,9 @@ static void prepareFastxData() {
         hostInsert.size() >= PARAM_SWEEP_K ? hostInsert.size() - PARAM_SWEEP_K + 1 : 0;
 
     // Query sequence (throughput benchmark)
-    if (!g_queryFastxPath.empty()) {
+    if (!g_query_fastx_path.empty()) {
         std::vector<char> hostQuery = benchmark_common::readFastxConcatenated(
-            g_queryFastxPath, static_cast<char>(PARAM_SWEEP_ALPHABET::separator)
+            g_query_fastx_path, static_cast<char>(PARAM_SWEEP_ALPHABET::separator)
         );
         if (hostQuery.empty()) {
             std::cerr << "Error: Query FASTX file is empty" << std::endl;
@@ -118,9 +118,9 @@ static void prepareFastxData() {
         kFprQueryLength >= PARAM_SWEEP_K ? kFprQueryLength - PARAM_SWEEP_K + 1 : 0;
 
     // Compute filter size: 16 bits per insert k-mer, rounded up to next power-of-two shards
-    g_filterBits = cuda::std::bit_ceil(g_fastxData->insertKmers * 16);
-    if (g_filterBits == 0) {
-        g_filterBits = 256;
+    g_filter_bits = cuda::std::bit_ceil(g_fastxData->insertKmers * 16);
+    if (g_filter_bits == 0) {
+        g_filter_bits = 256;
     }
 
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
@@ -134,8 +134,8 @@ class ShSweepFixture : public bm::Fixture {
    public:
     void SetUp(const bm::State& /*state*/) override {
         prepareFastxData();
-        filter = std::make_unique<cusbf::Filter<Config>>(g_filterBits);
-        filterMemory = filter->filterBits() / 8;
+        filter = std::make_unique<cusbf::filter<Config>>(g_filter_bits);
+        filterMemory = filter->filter_bits() / 8;
         d_output.resize(std::max(g_fastxData->queryKmers, g_fastxData->fprKmers));
     }
 
@@ -150,7 +150,7 @@ class ShSweepFixture : public bm::Fixture {
             static_cast<int64_t>(state.iterations() * g_fastxData->insertKmers)
         );
         state.counters["sequence_bases"] =
-            benchmark::Counter(static_cast<double>(g_fastxData->d_insertSequence.size()));
+            benchmark::Counter(static_cast<double>(g_fastxData->d_insert_sequence.size()));
         state.counters["memory_bytes"] = benchmark::Counter(
             static_cast<double>(filterMemory),
             benchmark::Counter::kDefaults,
@@ -171,7 +171,7 @@ class ShSweepFixture : public bm::Fixture {
         state.counters["false_positives"] = 0.0;
     }
 
-    std::unique_ptr<cusbf::Filter<Config>> filter;
+    std::unique_ptr<cusbf::filter<Config>> filter;
     uint64_t filterMemory = 0;
     thrust::device_vector<uint8_t> d_output;
     benchmark_common::GPUTimer timer;
@@ -185,10 +185,10 @@ void runShSweepInsert(Fixture& fixture, benchmark::State& state) {
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fixture.timer.start();
-        benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
+        benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
             cusbf::device_span<const char>{
-                thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
-                g_fastxData->d_insertSequence.size()
+                thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
+                g_fastxData->d_insert_sequence.size()
             }
         ));
         const double elapsed = fixture.timer.elapsed();
@@ -200,17 +200,17 @@ void runShSweepInsert(Fixture& fixture, benchmark::State& state) {
 template <typename Fixture>
 void runShSweepQuery(Fixture& fixture, benchmark::State& state) {
     fixture.filter->clear();
-    benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
+    benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
         cusbf::device_span<const char>{
-            thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
-            g_fastxData->d_insertSequence.size()
+            thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
+            g_fastxData->d_insert_sequence.size()
         }
     ));
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fixture.timer.start();
-        fixture.filter->containsSequenceDevice(
+        fixture.filter->contains_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(g_fastxData->d_querySequence.data()),
                 g_fastxData->d_querySequence.size()
@@ -229,17 +229,17 @@ void runShSweepQuery(Fixture& fixture, benchmark::State& state) {
 template <typename Fixture>
 void runShSweepFpr(Fixture& fixture, benchmark::State& state) {
     fixture.filter->clear();
-    benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
+    benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
         cusbf::device_span<const char>{
-            thrust::raw_pointer_cast(g_fastxData->d_insertSequence.data()),
-            g_fastxData->d_insertSequence.size()
+            thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
+            g_fastxData->d_insert_sequence.size()
         }
     ));
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fixture.timer.start();
-        fixture.filter->containsSequenceDevice(
+        fixture.filter->contains_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(g_fastxData->d_fprSequence.data()),
                 g_fastxData->d_fprSequence.size()
@@ -644,13 +644,13 @@ static void parseCustomArgs(int argc, char** argv, std::vector<char*>& benchmark
 
         constexpr const char* insertPrefix = "--insert-fastx=";
         if (std::strncmp(arg.c_str(), insertPrefix, std::strlen(insertPrefix)) == 0) {
-            g_insertFastxPath = arg.substr(std::strlen(insertPrefix));
+            g_insert_fastx_path = arg.substr(std::strlen(insertPrefix));
             continue;
         }
         if (arg == "--insert-fastx") {
             if (i + 1 < argc) {
                 ++i;
-                g_insertFastxPath = argv[i];
+                g_insert_fastx_path = argv[i];
             } else {
                 std::cerr << "Missing value for --insert-fastx" << std::endl;
                 std::exit(1);
@@ -660,13 +660,13 @@ static void parseCustomArgs(int argc, char** argv, std::vector<char*>& benchmark
 
         constexpr const char* queryPrefix = "--query-fastx=";
         if (std::strncmp(arg.c_str(), queryPrefix, std::strlen(queryPrefix)) == 0) {
-            g_queryFastxPath = arg.substr(std::strlen(queryPrefix));
+            g_query_fastx_path = arg.substr(std::strlen(queryPrefix));
             continue;
         }
         if (arg == "--query-fastx") {
             if (i + 1 < argc) {
                 ++i;
-                g_queryFastxPath = argv[i];
+                g_query_fastx_path = argv[i];
             } else {
                 std::cerr << "Missing value for --query-fastx" << std::endl;
                 std::exit(1);

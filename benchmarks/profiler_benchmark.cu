@@ -10,14 +10,14 @@
 
 #include <cuckoogpu/CuckooFilter.cuh>
 #include <cuco/bloom_filter.cuh>
-#include <cusbf/BloomFilter.cuh>
 #include <cusbf/device_span.cuh>
+#include <cusbf/filter.cuh>
 #include <cusbf/helpers.cuh>
 
 #include "benchmark_common.cuh"
 
 using CuSbfConfig = cusbf::Config<31, 28, 16, 4>;
-using CuSbfFilter = cusbf::Filter<CuSbfConfig>;
+using CuSbfFilter = cusbf::filter<CuSbfConfig>;
 using CucoBloom = cuco::bloom_filter<uint64_t>;
 using CuckooGpuConfig = cuckoogpu::Config<uint64_t, 16, 500, 256, 16>;
 using CuckooGpuFilter = cuckoogpu::Filter<CuckooGpuConfig>;
@@ -32,26 +32,26 @@ uint64_t cucoNumBlocks(uint64_t numItems) {
 struct BenchmarkInput {
     explicit BenchmarkInput(uint64_t numKmers) : sequenceLength(numKmers + CuSbfConfig::k - 1) {
         benchmark_common::gpuGenerateDna(d_sequence, sequenceLength, 42);
-        d_packedKmers.resize(numKmers);
+        d_packed_kmers.resize(numKmers);
         benchmark_common::gpuEncodePackedKmers<CuSbfConfig::k, cusbf::DnaAlphabet>(
             thrust::raw_pointer_cast(d_sequence.data()),
             sequenceLength,
-            thrust::raw_pointer_cast(d_packedKmers.data())
+            thrust::raw_pointer_cast(d_packed_kmers.data())
         );
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     }
 
     uint64_t sequenceLength{};
     thrust::device_vector<char> d_sequence;
-    thrust::device_vector<uint64_t> d_packedKmers;
+    thrust::device_vector<uint64_t> d_packed_kmers;
 };
 
-void benchmarkCuSbfInsert(uint64_t capacity, double loadFactor) {
-    const auto n = static_cast<uint64_t>(capacity * loadFactor);
+void benchmarkCuSbfInsert(uint64_t capacity, double load_factor) {
+    const auto n = static_cast<uint64_t>(capacity * load_factor);
     BenchmarkInput input(n);
     CuSbfFilter filter(cuda::std::bit_ceil(n * kBitsPerItem));
 
-    benchmark::DoNotOptimize(filter.insertSequenceDevice(
+    benchmark::DoNotOptimize(filter.insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(input.d_sequence.data()), input.sequenceLength
         }
@@ -59,7 +59,7 @@ void benchmarkCuSbfInsert(uint64_t capacity, double loadFactor) {
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     filter.clear();
-    benchmark::DoNotOptimize(filter.insertSequenceDevice(
+    benchmark::DoNotOptimize(filter.insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(input.d_sequence.data()), input.sequenceLength
         }
@@ -67,20 +67,20 @@ void benchmarkCuSbfInsert(uint64_t capacity, double loadFactor) {
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
 
-void benchmarkCuSbfQuery(uint64_t capacity, double loadFactor) {
-    const auto n = static_cast<uint64_t>(capacity * loadFactor);
+void benchmarkCuSbfQuery(uint64_t capacity, double load_factor) {
+    const auto n = static_cast<uint64_t>(capacity * load_factor);
     BenchmarkInput input(n);
     thrust::device_vector<uint8_t> d_output(n);
     CuSbfFilter filter(cuda::std::bit_ceil(n * kBitsPerItem));
 
-    benchmark::DoNotOptimize(filter.insertSequenceDevice(
+    benchmark::DoNotOptimize(filter.insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(input.d_sequence.data()), input.sequenceLength
         }
     ));
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
-    filter.containsSequenceDevice(
+    filter.contains_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(input.d_sequence.data()), input.sequenceLength
         },
@@ -90,62 +90,62 @@ void benchmarkCuSbfQuery(uint64_t capacity, double loadFactor) {
     benchmark::DoNotOptimize(thrust::raw_pointer_cast(d_output.data()));
 }
 
-void benchmarkCucoBloomInsert(uint64_t capacity, double loadFactor) {
-    const auto n = static_cast<uint64_t>(capacity * loadFactor);
+void benchmarkCucoBloomInsert(uint64_t capacity, double load_factor) {
+    const auto n = static_cast<uint64_t>(capacity * load_factor);
     BenchmarkInput input(n);
     CucoBloom filter(cucoNumBlocks(n));
 
-    filter.add(input.d_packedKmers.begin(), input.d_packedKmers.end());
+    filter.add(input.d_packed_kmers.begin(), input.d_packed_kmers.end());
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     filter.clear();
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
-    filter.add(input.d_packedKmers.begin(), input.d_packedKmers.end());
+    filter.add(input.d_packed_kmers.begin(), input.d_packed_kmers.end());
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
 
-void benchmarkCucoBloomQuery(uint64_t capacity, double loadFactor) {
-    const auto n = static_cast<uint64_t>(capacity * loadFactor);
+void benchmarkCucoBloomQuery(uint64_t capacity, double load_factor) {
+    const auto n = static_cast<uint64_t>(capacity * load_factor);
     BenchmarkInput input(n);
     thrust::device_vector<uint8_t> d_output(n);
     CucoBloom filter(cucoNumBlocks(n));
 
-    filter.add(input.d_packedKmers.begin(), input.d_packedKmers.end());
+    filter.add(input.d_packed_kmers.begin(), input.d_packed_kmers.end());
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     filter.contains(
-        input.d_packedKmers.begin(),
-        input.d_packedKmers.end(),
+        input.d_packed_kmers.begin(),
+        input.d_packed_kmers.end(),
         reinterpret_cast<bool*>(thrust::raw_pointer_cast(d_output.data()))
     );
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     benchmark::DoNotOptimize(thrust::raw_pointer_cast(d_output.data()));
 }
 
-void benchmarkCuckooGpuInsert(uint64_t capacity, double loadFactor) {
-    const auto n = static_cast<uint64_t>(capacity * loadFactor);
+void benchmarkCuckooGpuInsert(uint64_t capacity, double load_factor) {
+    const auto n = static_cast<uint64_t>(capacity * load_factor);
     BenchmarkInput input(n);
     CuckooGpuFilter filter(capacity);
 
-    filter.insertMany(input.d_packedKmers);
+    filter.insertMany(input.d_packed_kmers);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     filter.clear();
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
-    filter.insertMany(input.d_packedKmers);
+    filter.insertMany(input.d_packed_kmers);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
 
-void benchmarkCuckooGpuQuery(uint64_t capacity, double loadFactor) {
-    const auto n = static_cast<uint64_t>(capacity * loadFactor);
+void benchmarkCuckooGpuQuery(uint64_t capacity, double load_factor) {
+    const auto n = static_cast<uint64_t>(capacity * load_factor);
     BenchmarkInput input(n);
     thrust::device_vector<uint8_t> d_output(n);
     CuckooGpuFilter filter(capacity);
 
-    filter.insertMany(input.d_packedKmers);
+    filter.insertMany(input.d_packed_kmers);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
-    filter.containsMany(input.d_packedKmers, d_output);
+    filter.containsMany(input.d_packed_kmers, d_output);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     benchmark::DoNotOptimize(thrust::raw_pointer_cast(d_output.data()));
 }
@@ -156,7 +156,7 @@ int main(int argc, char** argv) {
     std::string filter = "cusbf";
     std::string operation = "insert";
     uint64_t exponent = 24;
-    double loadFactor = 0.95;
+    double load_factor = 0.95;
 
     app.add_option("filter", filter, "Filter type: cusbf, cucobloom, cuckoogpu")
         ->required()
@@ -167,38 +167,38 @@ int main(int argc, char** argv) {
     app.add_option("exponent", exponent, "Exponent for capacity = 2^x")
         ->required()
         ->check(CLI::PositiveNumber);
-    app.add_option("-l,--load-factor", loadFactor, "Load factor (0.0-1.0)")
+    app.add_option("-l,--load-factor", load_factor, "Load factor (0.0-1.0)")
         ->default_val(0.95)
         ->check(CLI::Range(0.0, 1.0));
 
     CLI11_PARSE(app, argc, argv);
 
     const uint64_t capacity = uint64_t{1} << exponent;
-    const auto n = static_cast<uint64_t>(capacity * loadFactor);
+    const auto n = static_cast<uint64_t>(capacity * load_factor);
 
     std::cout << "Filter: " << filter << '\n';
     std::cout << "Operation: " << operation << '\n';
     std::cout << "Capacity: " << capacity << '\n';
-    std::cout << "Load Factor: " << loadFactor << '\n';
+    std::cout << "Load Factor: " << load_factor << '\n';
     std::cout << "Number of keys: " << n << '\n';
 
     if (filter == "cusbf") {
         if (operation == "insert") {
-            benchmarkCuSbfInsert(capacity, loadFactor);
+            benchmarkCuSbfInsert(capacity, load_factor);
         } else {
-            benchmarkCuSbfQuery(capacity, loadFactor);
+            benchmarkCuSbfQuery(capacity, load_factor);
         }
     } else if (filter == "cucobloom") {
         if (operation == "insert") {
-            benchmarkCucoBloomInsert(capacity, loadFactor);
+            benchmarkCucoBloomInsert(capacity, load_factor);
         } else {
-            benchmarkCucoBloomQuery(capacity, loadFactor);
+            benchmarkCucoBloomQuery(capacity, load_factor);
         }
     } else if (filter == "cuckoogpu") {
         if (operation == "insert") {
-            benchmarkCuckooGpuInsert(capacity, loadFactor);
+            benchmarkCuckooGpuInsert(capacity, load_factor);
         } else {
-            benchmarkCuckooGpuQuery(capacity, loadFactor);
+            benchmarkCuckooGpuQuery(capacity, load_factor);
         }
     }
 

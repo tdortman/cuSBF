@@ -15,8 +15,8 @@
 
 #include <cuckoogpu/CuckooFilter.cuh>
 #include <cuco/bloom_filter.cuh>
-#include <cusbf/BloomFilter.cuh>
 #include <cusbf/device_span.cuh>
+#include <cusbf/filter.cuh>
 #include <cusbf/helpers.cuh>
 
 #include "benchmark_common.cuh"

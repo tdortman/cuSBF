@@ -28,7 +28,7 @@
 
 #include <cuda/std/bit>
 
-#include <cusbf/BloomFilter.cuh>
+#include <cusbf/filter.cuh>
 #include <cusbf/device_span.cuh>
 #include <cusbf/helpers.cuh>
 #include <cusbf/superbloom_ffi.hpp>
@@ -383,8 +383,8 @@ class CuSbfFixtureBase : public benchmark::Fixture {
         numSmers = sequenceLength - Config::s + 1;
 
         const uint64_t requestedFilterBits = cuda::std::bit_ceil(numKmers * 16);
-        filter = std::make_unique<cusbf::Filter<Config>>(requestedFilterBits);
-        filterMemory = filter->filterBits() / 8;
+        filter = std::make_unique<cusbf::filter<Config>>(requestedFilterBits);
+        filterMemory = filter->filter_bits() / 8;
         d_output.resize(numKmers);
     }
 
@@ -407,7 +407,7 @@ class CuSbfFixtureBase : public benchmark::Fixture {
     uint64_t filterMemory{};
     BenchmarkData<Config::k, typename Config::Alphabet>* benchData{};
     thrust::device_vector<uint8_t> d_output;
-    std::unique_ptr<cusbf::Filter<Config>> filter;
+    std::unique_ptr<cusbf::filter<Config>> filter;
     GPUTimer timer;
 };
 
@@ -433,7 +433,7 @@ void runCuSbfInsert(Fixture& fixture, benchmark::State& state) {
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fixture.timer.start();
-        benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
+        benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(fixture.benchData->d_throughputSequence.data()),
                 fixture.sequenceLength
@@ -448,7 +448,7 @@ void runCuSbfInsert(Fixture& fixture, benchmark::State& state) {
 template <typename Fixture>
 void runCuSbfQuery(Fixture& fixture, benchmark::State& state) {
     fixture.filter->clear();
-    benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
+    benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(fixture.benchData->d_throughputSequence.data()),
             fixture.sequenceLength
@@ -458,7 +458,7 @@ void runCuSbfQuery(Fixture& fixture, benchmark::State& state) {
 
     for (auto _ : state) {
         fixture.timer.start();
-        fixture.filter->containsSequenceDevice(
+        fixture.filter->contains_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(fixture.benchData->d_throughputSequence.data()),
                 fixture.sequenceLength
@@ -479,7 +479,7 @@ void runCuSbfFpr(Fixture& fixture, benchmark::State& state) {
     fixture.benchData->ensureFprData();
 
     fixture.filter->clear();
-    benchmark::DoNotOptimize(fixture.filter->insertSequenceDevice(
+    benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(fixture.benchData->d_fprInsertSequence.data()),
             fixture.sequenceLength
@@ -490,7 +490,7 @@ void runCuSbfFpr(Fixture& fixture, benchmark::State& state) {
     uint64_t falsePositives = 0;
     for (auto _ : state) {
         fixture.timer.start();
-        fixture.filter->containsSequenceDevice(
+        fixture.filter->contains_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(fixture.benchData->d_zeroOverlapSequence.data()),
                 fixture.sequenceLength
@@ -518,10 +518,10 @@ void runCuSbfFpr(Fixture& fixture, benchmark::State& state) {
 /// the Rust library's SHARD_COUNT constraint (nb_blocks >= 1024).
 inline void cpuFilterExponents(uint64_t numKmers, uint8_t& bitExp, uint8_t& blockExp) {
     constexpr uint64_t kBitsPerItem = 16;
-    uint64_t filterBits = cuda::std::bit_ceil(numKmers * kBitsPerItem);
+    uint64_t filter_bits = cuda::std::bit_ceil(numKmers * kBitsPerItem);
     constexpr uint64_t kMinFilterBits = uint64_t{1} << 19;
-    filterBits = std::max(filterBits, kMinFilterBits);
-    bitExp = static_cast<uint8_t>(cuda::std::bit_width(filterBits) - 1);
+    filter_bits = std::max(filter_bits, kMinFilterBits);
+    bitExp = static_cast<uint8_t>(cuda::std::bit_width(filter_bits) - 1);
     blockExp = 9;
 }
 
@@ -557,7 +557,7 @@ class SuperBloomCpuFixture : public benchmark::Fixture {
             return;
         }
 
-        filterBits = uint64_t{1} << bitVectorSizeExp;
+        filter_bits = uint64_t{1} << bitVectorSizeExp;
         h_output.resize(numKmers);
     }
 
@@ -583,7 +583,7 @@ class SuperBloomCpuFixture : public benchmark::Fixture {
     }
 
     void setCounters(benchmark::State& state) const {
-        setBenchmarkCounters(state, filterBits / 8, sequenceLength, numKmers);
+        setBenchmarkCounters(state, filter_bits / 8, sequenceLength, numKmers);
         state.counters["s"] = static_cast<double>(Config::s);
         state.counters["hashes"] = static_cast<double>(Config::hashCount);
     }
@@ -654,7 +654,7 @@ class SuperBloomCpuFixture : public benchmark::Fixture {
 
     uint64_t sequenceLength{};
     uint64_t numKmers{};
-    uint64_t filterBits{};
+    uint64_t filter_bits{};
     uint8_t bitVectorSizeExp{};
     uint8_t blockSizeExp{};
     BenchmarkData<Config::k, Alphabet>* benchData{};
