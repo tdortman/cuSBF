@@ -7,11 +7,11 @@
 #include "test_support.cuh"
 
 TEST_F(BloomFilterTest, InsertAndQuerySameSequenceHasNoFalseNegatives) {
-    cusbf::Filter<TestConfig> filter(1 << 12);
+    cusbf::filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGTACGT";
-    const uint64_t inserted = filter.insertSequence(sequence);
-    const auto hits = filter.containsSequence(sequence);
+    const uint64_t inserted = filter.insert_sequence(sequence);
+    const auto hits = filter.contains_sequence(sequence);
 
     ASSERT_EQ(inserted, sequence.size() - TestConfig::k + 1);
     ASSERT_EQ(hits.size(), inserted);
@@ -19,11 +19,11 @@ TEST_F(BloomFilterTest, InsertAndQuerySameSequenceHasNoFalseNegatives) {
 }
 
 TEST_F(BloomFilterTest, InvalidBasesResetForwardWindows) {
-    cusbf::Filter<TestConfig> filter(1 << 12);
+    cusbf::filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTNACGTACGTA";
-    const auto inserted = filter.insertSequence(sequence);
-    const auto hits = filter.containsSequence(sequence);
+    const auto inserted = filter.insert_sequence(sequence);
+    const auto hits = filter.contains_sequence(sequence);
 
     EXPECT_EQ(inserted, hits.size());
     const std::vector<uint8_t> expected = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1};
@@ -31,37 +31,37 @@ TEST_F(BloomFilterTest, InvalidBasesResetForwardWindows) {
 }
 
 TEST_F(BloomFilterTest, RepeatedInsertionIsIdempotent) {
-    cusbf::Filter<TestConfig> filter(1 << 12);
+    cusbf::filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGTACGT";
-    const auto firstInserted = filter.insertSequence(sequence);
-    const float firstLoadFactor = filter.loadFactor();
+    const auto firstInserted = filter.insert_sequence(sequence);
+    const float firstLoadFactor = filter.load_factor();
 
-    const auto secondInserted = filter.insertSequence(sequence);
-    const float secondLoadFactor = filter.loadFactor();
+    const auto secondInserted = filter.insert_sequence(sequence);
+    const float secondLoadFactor = filter.load_factor();
 
     EXPECT_EQ(firstInserted, secondInserted);
     EXPECT_FLOAT_EQ(firstLoadFactor, secondLoadFactor);
 }
 
 TEST_F(BloomFilterTest, ShortSequenceInsertAndQueryReturnEmpty) {
-    cusbf::Filter<TestConfig> filter(1 << 12);
+    cusbf::filter<TestConfig> filter(1 << 12);
 
     const std::string shortSequence = "ACGT";
-    const uint64_t inserted = filter.insertSequence(shortSequence);
-    const auto hits = filter.containsSequence(shortSequence);
+    const uint64_t inserted = filter.insert_sequence(shortSequence);
+    const auto hits = filter.contains_sequence(shortSequence);
 
     EXPECT_EQ(inserted, 0);
     EXPECT_TRUE(hits.empty());
 }
 
 TEST_F(BloomFilterTest, ShortSequenceDeviceOutputBufferRemainsUnchanged) {
-    cusbf::Filter<TestConfig> filter(1 << 12);
+    cusbf::filter<TestConfig> filter(1 << 12);
 
     thrust::device_vector<char> d_sequence({'A', 'C', 'G', 'T'});
     thrust::device_vector<uint8_t> d_output(1, uint8_t{0xAB});
 
-    filter.containsSequenceDevice(
+    filter.contains_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(d_sequence.data()), d_sequence.size()
         },
@@ -82,30 +82,30 @@ TEST_F(BloomFilterTest, ShortSequenceDeviceOutputBufferRemainsUnchanged) {
 }
 
 TEST_F(BloomFilterTest, ClearResetsMembership) {
-    cusbf::Filter<TestConfig> filter(1 << 12);
+    cusbf::filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGTACGT";
-    (void)filter.insertSequence(sequence);
+    (void)filter.insert_sequence(sequence);
     filter.clear();
 
-    const auto hits = filter.containsSequence(sequence);
+    const auto hits = filter.contains_sequence(sequence);
     EXPECT_TRUE(std::all_of(hits.begin(), hits.end(), [](uint8_t value) { return value == 0; }));
 }
 
 TEST_F(BloomFilterTest, DeviceOutputMatchesHostContainsResults) {
-    cusbf::Filter<TestConfig> filter(1 << 13);
+    cusbf::filter<TestConfig> filter(1 << 13);
 
     const std::string insertedSequence = "ACGTACGTACGTACGTACGTACGT";
     const std::string querySequence = "TACGTACGTACGTACGTACGTACG";
-    (void)filter.insertSequence(insertedSequence);
+    (void)filter.insert_sequence(insertedSequence);
 
-    const auto hostHits = filter.containsSequence(querySequence);
+    const auto hostHits = filter.contains_sequence(querySequence);
     ASSERT_FALSE(hostHits.empty());
 
     thrust::device_vector<char> d_query(querySequence.begin(), querySequence.end());
     thrust::device_vector<uint8_t> d_output(hostHits.size());
 
-    filter.containsSequenceDevice(
+    filter.contains_sequence_async(
         cusbf::device_span<const char>{thrust::raw_pointer_cast(d_query.data()), d_query.size()},
         cusbf::device_span<uint8_t>{thrust::raw_pointer_cast(d_output.data()), d_output.size()}
     );
@@ -118,42 +118,42 @@ TEST_F(BloomFilterTest, DeviceOutputMatchesHostContainsResults) {
 }
 
 TEST_F(BloomFilterTest, MultipleInsertionsRemainQueryable) {
-    cusbf::Filter<TestConfig> filter(1 << 14);
+    cusbf::filter<TestConfig> filter(1 << 14);
 
     const std::string sequenceA = "ACGTACGTACGTACGT";
     const std::string sequenceB = "TGCATGCATGCATGCA";
 
-    (void)filter.insertSequence(sequenceA);
-    (void)filter.insertSequence(sequenceB);
+    (void)filter.insert_sequence(sequenceA);
+    (void)filter.insert_sequence(sequenceB);
 
-    const auto hitsA = filter.containsSequence(sequenceA);
-    const auto hitsB = filter.containsSequence(sequenceB);
+    const auto hitsA = filter.contains_sequence(sequenceA);
+    const auto hitsB = filter.contains_sequence(sequenceB);
 
     EXPECT_TRUE(allOnes(hitsA));
     EXPECT_TRUE(allOnes(hitsB));
 }
 
 TEST_F(BloomFilterTest, LowercaseInsertionMatchesUppercaseQuery) {
-    cusbf::Filter<TestConfig> filter(1 << 12);
+    cusbf::filter<TestConfig> filter(1 << 12);
 
     const std::string lowerSequence = "acgtacgtacgtacgt";
     const std::string upperSequence = "ACGTACGTACGTACGT";
 
-    (void)filter.insertSequence(lowerSequence);
+    (void)filter.insert_sequence(lowerSequence);
 
-    const auto upperHits = filter.containsSequence(upperSequence);
-    const auto lowerHits = filter.containsSequence(lowerSequence);
+    const auto upperHits = filter.contains_sequence(upperSequence);
+    const auto lowerHits = filter.contains_sequence(lowerSequence);
 
     EXPECT_TRUE(allOnes(upperHits));
     EXPECT_TRUE(allOnes(lowerHits));
 }
 
 TEST_F(BloomFilterTest, ProteinAlphabetInsertAndQuerySameSequenceHasNoFalseNegatives) {
-    cusbf::Filter<ProteinTestConfig> filter(1 << 12);
+    cusbf::filter<ProteinTestConfig> filter(1 << 12);
 
     const std::string sequence = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    const uint64_t inserted = filter.insertSequence(sequence);
-    const auto hits = filter.containsSequence(sequence);
+    const uint64_t inserted = filter.insert_sequence(sequence);
+    const auto hits = filter.contains_sequence(sequence);
 
     ASSERT_EQ(inserted, sequence.size() - ProteinTestConfig::k + 1);
     ASSERT_EQ(hits.size(), inserted);
@@ -161,23 +161,23 @@ TEST_F(BloomFilterTest, ProteinAlphabetInsertAndQuerySameSequenceHasNoFalseNegat
 }
 
 TEST_F(BloomFilterTest, ProteinAlphabetLowercaseMatchesUppercaseQuery) {
-    cusbf::Filter<ProteinTestConfig> filter(1 << 12);
+    cusbf::filter<ProteinTestConfig> filter(1 << 12);
 
     const std::string lowerSequence = "abcdefghijklmnopqrstuvwxyz";
     const std::string upperSequence = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-    (void)filter.insertSequence(lowerSequence);
+    (void)filter.insert_sequence(lowerSequence);
 
-    EXPECT_TRUE(allOnes(filter.containsSequence(upperSequence)));
-    EXPECT_TRUE(allOnes(filter.containsSequence(lowerSequence)));
+    EXPECT_TRUE(allOnes(filter.contains_sequence(upperSequence)));
+    EXPECT_TRUE(allOnes(filter.contains_sequence(lowerSequence)));
 }
 
 TEST_F(BloomFilterTest, ProteinAlphabetInvalidSymbolsResetForwardWindows) {
-    cusbf::Filter<ProteinTestConfig> filter(1 << 12);
+    cusbf::filter<ProteinTestConfig> filter(1 << 12);
 
     const std::string sequence = "ACDE*ACDEFGHI";
-    const auto inserted = filter.insertSequence(sequence);
-    const auto hits = filter.containsSequence(sequence);
+    const auto inserted = filter.insert_sequence(sequence);
+    const auto hits = filter.contains_sequence(sequence);
 
     EXPECT_EQ(inserted, hits.size());
     const std::vector<uint8_t> expected = {0, 0, 0, 0, 0, 1, 1, 1, 1};
@@ -185,11 +185,11 @@ TEST_F(BloomFilterTest, ProteinAlphabetInvalidSymbolsResetForwardWindows) {
 }
 
 TEST_F(BloomFilterTest, CustomAlphabetUsesExplicitInvalidSentinel) {
-    cusbf::Filter<CustomAlphabetTestConfig> filter(1 << 12);
+    cusbf::filter<CustomAlphabetTestConfig> filter(1 << 12);
 
     const std::string sequence = "xyz!xyz";
-    const auto inserted = filter.insertSequence(sequence);
-    const auto hits = filter.containsSequence(sequence);
+    const auto inserted = filter.insert_sequence(sequence);
+    const auto hits = filter.contains_sequence(sequence);
 
     EXPECT_EQ(inserted, hits.size());
     const std::vector<uint8_t> expected = {1, 0, 0, 0, 1};
@@ -197,11 +197,11 @@ TEST_F(BloomFilterTest, CustomAlphabetUsesExplicitInvalidSentinel) {
 }
 
 TEST_F(BloomFilterTest, DnaTripletAlphabetInsertAndQuerySameSequenceHasNoFalseNegatives) {
-    cusbf::Filter<TripletTestConfig> filter(1 << 12);
+    cusbf::filter<TripletTestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTTAAACCCGGGTTT";
-    const uint64_t inserted = filter.insertSequence(sequence);
-    const auto hits = filter.containsSequence(sequence);
+    const uint64_t inserted = filter.insert_sequence(sequence);
+    const auto hits = filter.contains_sequence(sequence);
 
     ASSERT_EQ(
         inserted, sequence.size() / TripletTestConfig::symbolWidth - TripletTestConfig::k + 1
@@ -211,23 +211,23 @@ TEST_F(BloomFilterTest, DnaTripletAlphabetInsertAndQuerySameSequenceHasNoFalseNe
 }
 
 TEST_F(BloomFilterTest, DnaTripletAlphabetLowercaseMatchesUppercaseQuery) {
-    cusbf::Filter<TripletTestConfig> filter(1 << 12);
+    cusbf::filter<TripletTestConfig> filter(1 << 12);
 
     const std::string lowerSequence = "acgtacgttaaacccgggttt";
     const std::string upperSequence = "ACGTACGTTAAACCCGGGTTT";
 
-    (void)filter.insertSequence(lowerSequence);
+    (void)filter.insert_sequence(lowerSequence);
 
-    EXPECT_TRUE(allOnes(filter.containsSequence(upperSequence)));
-    EXPECT_TRUE(allOnes(filter.containsSequence(lowerSequence)));
+    EXPECT_TRUE(allOnes(filter.contains_sequence(upperSequence)));
+    EXPECT_TRUE(allOnes(filter.contains_sequence(lowerSequence)));
 }
 
 TEST_F(BloomFilterTest, DnaTripletAlphabetInvalidTripletsResetForwardWindows) {
-    cusbf::Filter<TripletTestConfig> filter(1 << 12);
+    cusbf::filter<TripletTestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACNNNGGGTTTAAA";
-    const auto inserted = filter.insertSequence(sequence);
-    const auto hits = filter.containsSequence(sequence);
+    const auto inserted = filter.insert_sequence(sequence);
+    const auto hits = filter.contains_sequence(sequence);
 
     EXPECT_EQ(inserted, hits.size());
     const std::vector<uint8_t> expected = {0, 0, 0, 1};
@@ -235,11 +235,11 @@ TEST_F(BloomFilterTest, DnaTripletAlphabetInvalidTripletsResetForwardWindows) {
 }
 
 TEST_F(BloomFilterTest, DnaTripletAlphabetIgnoresTrailingIncompleteTriplet) {
-    cusbf::Filter<TripletTestConfig> filter(1 << 12);
+    cusbf::filter<TripletTestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTTAAACCCGGGTTTAA";
-    const auto inserted = filter.insertSequence(sequence);
-    const auto hits = filter.containsSequence(sequence);
+    const auto inserted = filter.insert_sequence(sequence);
+    const auto hits = filter.contains_sequence(sequence);
 
     EXPECT_EQ(inserted, 5u);
     EXPECT_EQ(hits.size(), 5u);

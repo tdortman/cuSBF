@@ -14,7 +14,7 @@
 
 #include <unistd.h>
 
-#include <cusbf/BloomFilter.cuh>
+#include <cusbf/filter.cuh>
 
 using TestConfig = cusbf::Config<5, 4, 3, 4>;
 using ProteinTestConfig = cusbf::Config<5, 4, 3, 4, 256, cusbf::ProteinAlphabet>;

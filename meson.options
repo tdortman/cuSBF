@@ -33,3 +33,10 @@ option(
     value: 'auto',
     description: 'Build examples for the library',
 )
+
+option(
+    'large_fastx_tests',
+    type: 'feature',
+    value: 'disabled',
+    description: 'Register the configurable-size FASTX test (CUSBF_LARGE_FASTX_GB/MB/BYTES)',
+)
