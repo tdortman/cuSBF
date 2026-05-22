@@ -22,9 +22,10 @@ class filter_ref {
    public:
     using block_type = filter_block<Config>;
 
-    __host__ __device__ filter_ref() = default;
+    __host__ __device__ constexpr filter_ref() noexcept : blocks_{}, num_blocks_{} {
+    }
 
-    __host__ __device__ filter_ref(block_type* blocks, uint64_t num_blocks)
+    __host__ __device__ constexpr filter_ref(block_type* blocks, uint64_t num_blocks) noexcept
         : blocks_(blocks), num_blocks_(num_blocks) {
     }
 
