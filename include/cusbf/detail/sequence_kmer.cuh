@@ -15,21 +15,28 @@
 
 namespace cusbf::detail {
 
+/**
+ * @brief Device-side view of an encoded sequence for k-mer / s-mer counting.
+ */
 template <typename Config>
 struct SequenceKmerInput {
+    /// Encoded sequence bytes (@ref Config::symbolWidth per symbol).
     device_span<const char> sequence;
 
+    /// @brief Number of k-mer windows in @ref sequence.
     [[nodiscard]] constexpr __host__ __device__ uint64_t kmerCount() const {
         const uint64_t symbols = sequence.size() / Config::symbolWidth;
         return symbols < Config::k ? 0 : (symbols - Config::k + 1);
     }
 
+    /// @brief Number of s-mer windows in @ref sequence.
     [[nodiscard]] constexpr __host__ __device__ uint64_t smerCount() const {
         const uint64_t symbols = sequence.size() / Config::symbolWidth;
         return symbols < Config::s ? 0 : (symbols - Config::s + 1);
     }
 };
 
+/// @brief Minimum minimizer hash over all @c m-mers in a packed k-mer.
 template <typename Config>
 [[nodiscard]] __device__ __forceinline__ uint64_t packed_kmer_minimizer_hash(uint64_t packed_kmer) {
     uint64_t minimizer_hash = kInvalidHash;
@@ -42,6 +49,7 @@ template <typename Config>
     return minimizer_hash;
 }
 
+/// @brief Bloom hash for the s-mer at @p start within a packed k-mer.
 template <typename Config>
 [[nodiscard]] __device__ __forceinline__ uint64_t
 packed_kmer_smer_hash(uint64_t packed_kmer, uint64_t start) {
@@ -50,6 +58,7 @@ packed_kmer_smer_hash(uint64_t packed_kmer, uint64_t start) {
     return hash64(packed_smer);
 }
 
+/// @brief Loads four 64-bit shard words with 256-bit (sm_100+) or 128-bit vector loads.
 template <typename Config>
 __device__ __forceinline__ void
 load_shard_words4(const filter_block<Config>* shards, uint64_t shard_index, uint64_t* w) {
@@ -61,6 +70,7 @@ load_shard_words4(const filter_block<Config>* shards, uint64_t shard_index, uint
 #endif
 }
 
+/// @brief Packs @c K encoded symbols from a shared-memory tile starting at @p start.
 template <typename Config, uint64_t K>
 __device__ __forceinline__ uint64_t pack_kmer_from_tile(const uint8_t* tile, uint64_t start) {
     uint64_t packed = 0;
@@ -71,12 +81,14 @@ __device__ __forceinline__ uint64_t pack_kmer_from_tile(const uint8_t* tile, uin
     return packed;
 }
 
+/// @brief Slides a packed k-mer window by one encoded base.
 template <typename Config, uint64_t K>
 __device__ __forceinline__ uint64_t advance_packed_kmer(uint64_t packed, uint8_t new_base) {
     return ((packed << Config::symbolBits) | (new_base & Config::symbolMask)) &
            packedWindowMask<Config, K>();
 }
 
+/// @brief True when no symbol in the k-mer window is @ref Config::Alphabet::invalidSymbol.
 template <typename Config>
 __device__ __forceinline__ bool kmer_is_valid(const uint8_t* tile, uint64_t start) {
     _Pragma("unroll")
@@ -88,6 +100,11 @@ __device__ __forceinline__ bool kmer_is_valid(const uint8_t* tile, uint64_t star
     return true;
 }
 
+/**
+ * @brief Encodes a block's sequence slice into @p sequence_tile and reports global validity.
+ *
+ * @return @c true when every encoded base in the tile is valid.
+ */
 template <typename Config>
 __device__ __forceinline__ bool prepare_sequence_hash_tiles(
     const char* sequence,

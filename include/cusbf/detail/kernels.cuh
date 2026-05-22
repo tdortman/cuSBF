@@ -16,6 +16,11 @@
 
 namespace cusbf::detail {
 
+/**
+ * @brief Query kernel: one byte per k-mer (1 = present, 0 = absent or invalid).
+ *
+ * Threads stride @c kContainsSequenceStride k-mers, warps sharing a shard load it once.
+ */
 template <typename Config>
 __global__ __launch_bounds__(Config::cudaBlockSize, 6) void contains_sequence_kmers_kernel(
     SequenceKmerInput<Config> input,
@@ -110,6 +115,11 @@ __global__ __launch_bounds__(Config::cudaBlockSize, 6) void contains_sequence_km
     }
 }
 
+/**
+ * @brief Insert kernel: sectorized Bloom updates grouped by minimizer shard.
+ *
+ * Warp-local segmented reduction merges consecutive k-mers targeting the same shard.
+ */
 template <typename Config>
 __global__ void insert_sequence_kmers_kernel(
     SequenceKmerInput<Config> input,

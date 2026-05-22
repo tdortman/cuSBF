@@ -34,23 +34,36 @@ template <
 struct Config {
     using Alphabet = Alphabet_;
 
+    /// K-mer length in symbols.
     static constexpr uint16_t k = K_;
+    /// Minimizer width in symbols.
     static constexpr uint16_t m = M_;
+    /// S-mer width (Bloom hash seed) in symbols.
     static constexpr uint16_t s = S_;
+    /// Independent Bloom hash functions.
     static constexpr uint64_t hashCount = HashCount_;
     static constexpr uint64_t alphabetSize = Alphabet::symbolCount;
+    /// Input bytes per symbol.
     static constexpr uint64_t symbolWidth = Alphabet::symbolWidth;
     static constexpr uint64_t symbolBits = cuda::std::bit_width(alphabetSize - 1);
     static constexpr uint64_t symbolMask = (uint64_t{1} << symbolBits) - 1;
+    /// Bits per shard (filter block).
     static constexpr uint64_t filterBlockBits = 256;
+    /// CUDA threads per kernel block.
     static constexpr uint64_t cudaBlockSize = CudaBlockSize_;
 
+    /// Bits per shard word.
     static constexpr uint64_t wordBits = 64;
     static constexpr uint64_t blockWordCount = filterBlockBits / wordBits;
+    /// M-mers evaluated per k-mer window.
     static constexpr uint64_t minimizerSpan = k - m + 1;
+    /// S-mers hashed per k-mer (findere).
     static constexpr uint64_t findereSpan = k - s + 1;
+    /// Threads cooperating on insert.
     static constexpr uint64_t insertGroupSize = blockWordCount;
+    /// Threads cooperating on query (fused path).
     static constexpr uint64_t queryGroupSize = 1;
+    /// Max consecutive k-mers per warp run.
     static constexpr uint64_t maxRunKmers = cudaBlockSize;
 
     static_assert(k > 0, "k must be positive");

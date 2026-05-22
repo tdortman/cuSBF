@@ -10,7 +10,7 @@ PREDEFINED             = __CUDA_ARCH__=1200 \
 
 # Inputs
 INPUT                  = include, README.md
-FILE_PATTERNS          = *.cuh
+FILE_PATTERNS          = *.cuh *.hpp
 RECURSIVE              = YES
 EXTENSION_MAPPING      = cuh=C++
 

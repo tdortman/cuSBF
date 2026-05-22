@@ -25,8 +25,14 @@ struct alignas(32) filter_block {
     static constexpr uint64_t sliceWidth = 64 / Config::hashCount;
     static constexpr bool useBitSlicing = sliceWidth >= wordBitsLog2;
 
+    /// Sector words, hash @c i maps to word @c i % blockWordCount.
     uint64_t words[wordCount];
 
+    /**
+     * @brief Bit position within shard word @c HashIndex % blockWordCount for @p baseHash.
+     *
+     * Uses bit-slicing when @c sliceWidth >= wordBitsLog2, otherwise a salted multiply-shift.
+     */
     template <uint64_t HashIndex>
     [[nodiscard]] constexpr __host__ __device__ static uint64_t sectorizedBitAddress(
         uint64_t baseHash
@@ -40,6 +46,11 @@ struct alignas(32) filter_block {
         }
     }
 
+    /**
+     * @brief Accumulates Bloom bit masks for all hash indices into four shard words.
+     *
+     * ORs into the output masks in place, used during insert to build per-k-mer updates.
+     */
     __device__ __forceinline__ static void sectorizedHashToMasks(
         uint64_t baseHash,
         uint64_t& mask0,

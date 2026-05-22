@@ -14,12 +14,17 @@
 
 namespace cusbf {
 
-/// @brief Per-record metadata inside a Normalized record batch.
+/// @brief Per-record metadata inside a normalized record batch.
 struct NormalizedRecord {
+    /// Index in the source @ref RecordBatchView.
     uint64_t record_index{};
+    /// Byte offset in the dense input sequence.
     uint64_t input_offset{};
+    /// Symbol offset in the normalized sequence (k-mer index base).
     uint64_t output_offset{};
+    /// Record payload size in bytes after normalization.
     uint64_t size{};
+    /// K-mer windows with no invalid symbols in this record.
     uint64_t valid_kmers{};
 };
 
@@ -31,14 +36,17 @@ struct NormalizedRecord {
  */
 class NormalizedRecordBatch {
    public:
+    /// @brief Dense normalized sequence (includes inter-record separators).
     [[nodiscard]] const std::string& sequence() const noexcept {
         return sequence_;
     }
 
+    /// @brief Per-record metadata in source order.
     [[nodiscard]] cuda::std::span<const NormalizedRecord> records() const noexcept {
         return cuda::std::span<const NormalizedRecord>{records_.data(), records_.size()};
     }
 
+    /// @brief Sum of @ref NormalizedRecord::valid_kmers across all records.
     [[nodiscard]] uint64_t total_valid_kmers() const noexcept {
         uint64_t total = 0;
         for (const NormalizedRecord& record : records_) {
@@ -273,7 +281,12 @@ inline void normalize_record_batch_into_buffer(
 }  // namespace detail
 
 /**
- * @brief Builds a Normalized record batch into reusable host buffers.
+ * @brief Builds a normalized record batch into reusable host buffers.
+ *
+ * @tparam Config  Filter configuration (alphabet and k-mer sizing).
+ * @param batch    Dense input batch without embedded separators.
+ * @param sequence_out  Output normalized sequence buffer (resized in place).
+ * @param records_out   Output per-record metadata (cleared then filled).
  */
 template <typename Config>
 void normalize_record_batch_into(
@@ -293,7 +306,11 @@ void normalize_record_batch_into(
 }
 
 /**
- * @brief Builds a Normalized record batch from a dense Record batch view.
+ * @brief Builds a normalized record batch from a dense @ref RecordBatchView.
+ *
+ * @tparam Config Filter configuration (alphabet and k-mer sizing).
+ * @param batch   Dense input batch without embedded separators.
+ * @return Owning normalized batch ready for @ref filter::insert_record_batch or query APIs.
  */
 template <typename Config>
 [[nodiscard]] NormalizedRecordBatch normalize_record_batch(RecordBatchView batch) {

@@ -47,6 +47,18 @@
 
 namespace cusbf {
 
+/**
+ * @brief GPU-resident Super Bloom filter for batch k-mer insert and query.
+ *
+ * @p Config fixes k-mer length, minimizer and s-mer widths, hash count, CUDA
+ * block size, and alphabet at compile time. Host bulk APIs synchronize before
+ * returning, device-span @c *_async methods do not.
+ *
+ * FASTX and record-batch paths inject @ref Config::Alphabet::separator between
+ * records so cross-record k-mers are never formed.
+ *
+ * @tparam Config Compile-time filter configuration (@ref cusbf::Config).
+ */
 template <typename Config>
 class filter {
    private:
@@ -145,6 +157,7 @@ class filter {
      * @ref cusbf::detail::load256BitGlobalNC.
      */
     using block_type = filter_block<Config>;
+    /// Alias for @ref block_type (one 256-bit shard).
     using Shard = block_type;
 
     static_assert(Config::blockWordCount == 4, "Filter only supports the fused 256-bit shard path");
@@ -186,15 +199,9 @@ class filter {
     ~filter() = default;
 
     /**
-     * @brief Inserts all valid k-mers from a host-resident sequence.
+     * @brief Non-owning device reference to this filter's shard storage.
      *
-     * Copies the sequence to device, launches the insert kernel, and synchronises
-     * before returning. K-mers containing characters outside {A,C,G,T,a,c,g,t}
-     * are skipped.
-     *
-     * @param sequence  Raw nucleotide sequence.
-     * @param stream    CUDA stream to use (default: null stream).
-     * @return Number of k-mers attempted (sequences shorter than k yield 0).
+     * Trivially copyable, intended to be passed by value into CUDA kernels.
      */
     [[nodiscard]] filter_ref<Config> ref() const noexcept {
         return filter_ref<Config>{
@@ -203,6 +210,16 @@ class filter {
         };
     }
 
+    /**
+     * @brief Inserts all valid k-mers from a host-resident sequence.
+     *
+     * Copies the sequence to device, launches the insert kernel, and synchronises
+     * before returning. K-mer windows containing alphabet-invalid symbols are skipped.
+     *
+     * @param sequence  Host-resident sequence bytes (alphabet-encoded width per symbol).
+     * @param stream    CUDA stream to use (default: null stream).
+     * @return Number of k-mer windows attempted (sequences shorter than @c k yield 0).
+     */
     [[nodiscard]] uint64_t
     insert_sequence(std::string_view sequence, cuda::stream_ref stream = cudaStream_t{}) {
         if (record_symbol_count(sequence.size()) < Config::k) {
@@ -302,12 +319,13 @@ class filter {
      *
      * Uses @p fill_fraction of free GPU memory to size chunks. When the file fits in a
      * single chunk, reads via a lightweight stream (no mmap, no ping-pong). Larger files
-     * are mmap'd if they fit in host RAM, otherwise streamed; multi-chunk paths overlap
+     * are mmap'd if they fit in host RAM, otherwise streamed, multi-chunk paths overlap
      * host assembly with GPU work.
      *
      * @param path           Path to a FASTA or FASTQ file (optionally gzip-compressed).
      * @param fill_fraction  Fraction of free GPU memory for per-chunk staging (default 0.7).
-     * @param stream         Optional CUDA stream; default uses an internal pipelined path.
+     * @param stream         Optional CUDA stream, default uses an internal pipelined path.
+     * @return Report summarising records indexed, bases processed, and k-mers inserted.
      */
     [[nodiscard]] FastxInsertReport insert_fastx_file(
         std::string_view path,
@@ -502,6 +520,11 @@ class filter {
     /**
      * @brief Queries a FASTA/FASTQ file and emits one record result per parsed record.
      *
+     * @param path           Path to a FASTA or FASTQ file (optionally gzip-compressed).
+     * @param consume        Per-record callback.
+     * @param fill_fraction  Fraction of free GPU memory for per-chunk staging (default 0.7).
+     * @param stream         CUDA stream to use.
+     * @return Aggregate query summary for the whole file.
      * @see query_fastx_records
      */
     template <typename Consumer>
@@ -551,6 +574,10 @@ class filter {
      * @brief Queries all k-mers from a FASTA/FASTQ file via chunked streaming and
      * preserves per-record hit vectors.
      *
+     * @param path           Path to a FASTA or FASTQ file (optionally gzip-compressed).
+     * @param fill_fraction  Fraction of free GPU memory for per-chunk staging (default 0.7).
+     * @param stream         CUDA stream to use.
+     * @return Aggregate and per-record query results.
      * @see query_fastx_detailed
      */
     [[nodiscard]] FastxDetailedQueryReport query_fastx_file_detailed(

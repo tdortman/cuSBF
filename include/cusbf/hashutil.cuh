@@ -78,7 +78,7 @@ constexpr __host__ __device__ __forceinline__ uint64_t finalize(uint64_t h) {
 /**
  * @brief Computes the xxHash-64 digest of a value.
  *
- * @tparam T     Type of the value; hashed as raw bytes.
+ * @tparam T     Type of the value, hashed as raw bytes.
  * @param  key   Value to hash.
  * @param  seed  Optional seed (default 0).
  * @return 64-bit hash digest.

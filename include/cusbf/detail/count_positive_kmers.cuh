@@ -16,6 +16,7 @@
 
 namespace cusbf::detail {
 
+/// @brief Per-record kernel: sums @c hits[output_offset ..] for each @ref NormalizedRecord.
 template <typename Config>
 __global__ void count_positive_kmers_per_record_kernel(
     const uint8_t* hits,
@@ -44,6 +45,7 @@ __global__ void count_positive_kmers_per_record_kernel(
     positive_kmers_out[record_index] = positive;
 }
 
+/// @brief Device-wide count of set bits in a per-k-mer hit buffer.
 template <typename Config>
 [[nodiscard]] inline uint64_t
 count_positive_kmers_total(device_span<const uint8_t> hits, cuda::stream_ref stream) {
@@ -60,6 +62,11 @@ count_positive_kmers_total(device_span<const uint8_t> hits, cuda::stream_ref str
     ));
 }
 
+/**
+ * @brief Fills @p positive_kmers_out with per-record positive k-mer counts.
+ *
+ * @p positive_kmers_out must hold at least @p records.size() elements.
+ */
 template <typename Config>
 inline void count_positive_kmers_per_record(
     device_span<const uint8_t> hits,

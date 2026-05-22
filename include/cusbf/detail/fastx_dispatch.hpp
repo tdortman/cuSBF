@@ -22,13 +22,13 @@ namespace cusbf::detail {
 
 /// @brief How a FASTX file is read and chunked for GPU processing.
 enum class fastx_dispatch_path {
-    /// @brief Whole file in one GPU chunk; stream via @c istream (no mmap).
+    /// @brief Whole file in one GPU chunk, stream via @c istream (no mmap).
     single_chunk_stream,
-    /// @brief Whole file in one GPU chunk; mmap'd when it fits in host RAM.
+    /// @brief Whole file in one GPU chunk, mmap'd when it fits in host RAM.
     single_chunk_mmap,
-    /// @brief Multiple GPU chunks; file mmap'd when it fits in host RAM.
+    /// @brief Multiple GPU chunks, file mmap'd when it fits in host RAM.
     chunked_mmap,
-    /// @brief Multiple GPU chunks; stream via @c istream (gzip or larger than RAM).
+    /// @brief Multiple GPU chunks, stream via @c istream (gzip or larger than RAM).
     chunked_stream,
 };
 
@@ -119,8 +119,8 @@ select_fastx_dispatch_path(std::string_view path, fastx_chunk_mode mode, double 
 /// @brief Opens a FASTX path and invokes @p handler with a reader and dispatch path.
 ///
 /// @p handler receives the reader and how the file was opened. Use
-/// Small files use @ref fastx_dispatch_path::single_chunk_stream; GPU-sized inputs use
-/// @ref fastx_dispatch_path::single_chunk_mmap; larger inputs use pipelined mmap or stream.
+/// Small files use @ref fastx_dispatch_path::single_chunk_stream, GPU-sized inputs use
+/// @ref fastx_dispatch_path::single_chunk_mmap, larger inputs use pipelined mmap or stream.
 template <typename Config, typename Handler>
 void dispatch_fastx_file(
     std::string_view path,

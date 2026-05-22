@@ -10,6 +10,11 @@ namespace cusbf {
 /// @brief Exception thrown on CUDA runtime errors.
 class CudaError : public std::runtime_error {
    public:
+    /**
+     * @brief Constructs an error describing @p code at @p file:@p line.
+     *
+     * Prefer @ref CUSBF_CUDA_CALL rather than throwing directly.
+     */
     CudaError(cudaError_t code, const char* file, int line)
         : std::runtime_error(
               std::string(file) + ":" + std::to_string(line) + " " + cudaGetErrorString(code)
@@ -17,6 +22,7 @@ class CudaError : public std::runtime_error {
           code_(code) {
     }
 
+    /// @brief CUDA error code that triggered this exception.
     [[nodiscard]] cudaError_t code() const noexcept {
         return code_;
     }

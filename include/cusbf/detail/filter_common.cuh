@@ -10,6 +10,7 @@
 
 namespace cusbf::detail {
 
+/// @brief Device functor for bitwise OR reduction (CUB @c WarpReduce).
 template <typename T>
 struct BitwiseOr {
     __host__ __device__ __forceinline__ T operator()(T lhs, T rhs) const {
@@ -17,6 +18,7 @@ struct BitwiseOr {
     }
 };
 
+/// @brief K-mers processed per query thread per inner loop iteration.
 inline constexpr uint32_t kContainsSequenceStride = 4;
 
 /// @brief Sentinel hash value indicating "no valid minimizer found".
@@ -90,18 +92,21 @@ struct SaltLiteral<15> {
     static constexpr uint64_t value = 0xBBE0'56FD'ADE1'4B91ULL;
 };
 
+/// @brief Compile-time multiplicative salt for Bloom hash index @p Index.
 template <uint64_t Index>
 [[nodiscard]] __host__ __device__ __forceinline__ constexpr uint64_t multiplicativeSaltLiteral() {
     static_assert(Index < 16, "Salt index out of range");
     return SaltLiteral<Index>::value;
 }
 
+/// @brief Unrolled invocation of @p fn for each Bloom hash index in @p Config.
 template <typename Config, typename Fn, uint64_t... HashIndices>
 __host__ __device__ __forceinline__ void
 forEachHashIndexImpl(Fn&& fn, std::index_sequence<HashIndices...>) {
     (fn(std::integral_constant<uint64_t, HashIndices>{}), ...);
 }
 
+/// @brief Invokes @p fn once per Bloom hash index (compile-time unrolled).
 template <typename Config, typename Fn>
 __host__ __device__ __forceinline__ void forEachHashIndex(Fn&& fn) {
     forEachHashIndexImpl<Config>(
@@ -126,6 +131,7 @@ extractPackedSubwindow(uint64_t packed_kmer, uint64_t start) {
            packedWindowMask<Config, WindowLength>();
 }
 
+/// @brief 64-bit atomic OR used for sectorized Bloom inserts.
 __device__ __forceinline__ void atomicOrWord(uint64_t* ptr, uint64_t value) {
     atomicOr(reinterpret_cast<unsigned long long*>(ptr), static_cast<unsigned long long>(value));
 }
