@@ -99,25 +99,25 @@ meson setup build -Dparam_sweep=enabled -Dparam_sweep_alphabet=protein
 ## Usage
 
 ```cpp
-#include <cusbf/BloomFilter.cuh>
+#include <cusbf/filter.cuh>
 
 // Configure the filter: k-mer length, s-mer width, minimizer width, hash count
 using Config = cusbf::Config<31, 28, 16, 4>;
 
 // Create a filter with the desired capacity (in bits)
-cusbf::Filter<Config> filter(1 << 24);  // ~16M bits
+cusbf::filter<Config> filter(1 << 24);  // ~16M bits
 
 // Insert k-mers from a DNA sequence (synchronous)
-filter.insertSequence("ACGTACGTACGTACGTACGTACGTACGTACGT");
+filter.insert_sequence("ACGTACGTACGTACGTACGTACGTACGTACGT");
 
 // Query k-mers (returns vector<uint8_t>, 1 = present, 0 = absent)
-auto hits = filter.containsSequence("ACGTACGTACGTACGTACGTACGTACGTACGT");
+auto hits = filter.contains_sequence("ACGTACGTACGTACGTACGTACGTACGTACGT");
 
 // Device-resident API (async, no synchronization)
 thrust::device_vector<char> d_seq = ...;
 thrust::device_vector<uint8_t> d_results(numKmers);
-filter.insertSequenceDevice(cusbf::device_span<const char>(d_seq));
-filter.containsSequenceDevice(
+filter.insert_sequence_async(cusbf::device_span<const char>(d_seq));
+filter.contains_sequence_async(
     cusbf::device_span<const char>(d_seq),
     cusbf::device_span<uint8_t>(d_results)
 );
@@ -128,7 +128,7 @@ std::vector<cusbf::RecordRange> batchRanges{
     {0, 8},
     {8, 8},
 };
-auto batchSummary = filter.queryRecordBatch(
+auto batchSummary = filter.query_record_batch(
     {
         batchSequence,
         cuda::std::span<const cusbf::RecordRange>{batchRanges.data(), batchRanges.size()},
@@ -139,11 +139,11 @@ auto batchSummary = filter.queryRecordBatch(
 );
 
 // FASTA/FASTQ file insertion and aggregate query (chunked internally for large inputs)
-filter.insertFastxFile("reference.fasta");
-auto summary = filter.queryFastxFile("queries.fastq");
+filter.insert_fastx_file("reference.fasta");
+auto summary = filter.query_fastx_file("queries.fastq");
 
 // Streaming FASTX query emits each record as soon as its chunk completes
-auto streamed = filter.queryFastxFileRecords(
+auto streamed = filter.query_fastx_file_records(
     "queries.fastq",
     [](const cusbf::FastxRecordView& record) {
         // record.header, record.sequence, record.queriedKmers, record.hits
@@ -151,36 +151,36 @@ auto streamed = filter.queryFastxFileRecords(
 );
 
 // Detailed FASTX query keeps owning per-record copies in source order
-auto detailed = filter.queryFastxFileDetailed("queries.fastq");
+auto detailed = filter.query_fastx_file_detailed("queries.fastq");
 
 // Inspect filter state
-double load = filter.loadFactor();  // fraction of set bits
-uint64_t bits = filter.filterBits();
+double load = filter.load_factor();  // fraction of set bits
+uint64_t bits = filter.filter_bits();
 ```
 
 ### Configuration Options
 
 The `Config` template accepts the following parameters:
 
-| Parameter       | Description                                       | Default       |
-| --------------- | ------------------------------------------------- | ------------- |
-| `K`             | k-mer length (max depends on alphabet)            | -             |
-| `S`             | s-mer width for findere Bloom hash seed (1-K)     | -             |
-| `M`             | Minimiser width for shard selection (1-K)         | -             |
-| `HashCount`     | Number of independent Bloom hash functions (1-16) | 4             |
-| `CudaBlockSize` | CUDA threads per block                            | 256           |
-| `Alphabet`      | Symbol encoding (DNA or protein)                  | `DnaAlphabet` |
+| Parameter       | Description                                            | Default       |
+| --------------- | ------------------------------------------------------ | ------------- |
+| `K`             | k-mer length (max depends on alphabet)                 | -             |
+| `S`             | s-mer width for findere Bloom hash seed (1-K)          | -             |
+| `M`             | Minimiser width for shard selection (1-K)              | -             |
+| `HashCount`     | Number of independent Bloom hash functions (4,8,12,16) | 4             |
+| `CudaBlockSize` | CUDA threads per block                                 | 256           |
+| `Alphabet`      | Symbol encoding (DNA or protein)                       | `DnaAlphabet` |
 
 ### Protein Alphabet Support
 
 ```cpp
-#include <cusbf/BloomFilter.cuh>
+#include <cusbf/filter.cuh>
 
 using ProteinConfig = cusbf::Config<12, 10, 6, 4, 256, cusbf::ProteinAlphabet>;
-cusbf::Filter<ProteinConfig> filter(1 << 24);
+cusbf::filter<ProteinConfig> filter(1 << 24);
 
-filter.insertSequence("ACDEFGHIKLMNPQRSTVWY");
-auto hits = filter.containsSequence("ACDEFGHIKLMNPQRSTVWY");
+filter.insert_sequence("ACDEFGHIKLMNPQRSTVWY");
+auto hits = filter.contains_sequence("ACDEFGHIKLMNPQRSTVWY");
 ```
 
 ## Related Publications
