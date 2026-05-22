@@ -1,0 +1,5 @@
+[wrap-git]
+url = https://github.com/saltsystemslab/gpu-filters.git
+revision = 4907f886363a4364e3b03b4fffc5338a2d5c5e29
+patch_directory = gpu-filters
+depth = 1
