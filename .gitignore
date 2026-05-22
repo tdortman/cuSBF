@@ -26,3 +26,9 @@ benchmark*.csv
 doxygen
 __pycache__
 data
+
+# Generated multi-GiB FASTX inputs for local out-of-core tests (see scripts/run-large-fastx-test.sh)
+build/test_artifacts/
+*.large.fa
+*.large.fasta
+*.large.fastq
