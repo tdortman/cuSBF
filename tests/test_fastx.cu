@@ -31,8 +31,8 @@ TEST_F(BloomFilterTest, InsertFastxFileParsesWrappedFastaRecords) {
         "ACGT\n"
     );
 
-    const auto report = filter.insert_fastx_file(file.path);
-    const auto hits = filter.contains_sequence(sequence);
+    const auto report = CUSBF_UNWRAP(filter.insert_fastx_file(file.path));
+    const auto hits = CUSBF_UNWRAP(filter.contains_sequence(sequence));
 
     EXPECT_EQ(report.recordsIndexed, 1);
     EXPECT_EQ(report.indexedBases, sequence.size());
@@ -44,7 +44,7 @@ TEST_F(BloomFilterTest, QueryFastxFileParsesWrappedFastqWithCrLf) {
     cusbf::filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGT";
-    (void)filter.insert_sequence(sequence);
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequence));
 
     const auto file = writeTempFile(
         "@wrapped\r\n"
@@ -55,7 +55,7 @@ TEST_F(BloomFilterTest, QueryFastxFileParsesWrappedFastqWithCrLf) {
         "IIIIII\r\n"
     );
 
-    const auto report = filter.query_fastx_file(file.path);
+    const auto report = CUSBF_UNWRAP(filter.query_fastx_file(file.path));
 
     EXPECT_EQ(report.recordsQueried, 1);
     EXPECT_EQ(report.queriedBases, sequence.size());
@@ -67,7 +67,7 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsParsesWrappedFastqWithCrLf) {
     cusbf::filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGT";
-    (void)filter.insert_sequence(sequence);
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequence));
 
     const auto file = writeTempFile(
         "@wrapped\r\n"
@@ -79,8 +79,9 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsParsesWrappedFastqWithCrLf) {
     );
 
     std::vector<StreamedRecord> records;
-    const auto summary =
-        filter.query_fastx_file_records(file.path, [&](const cusbf::FastxRecordView& record) {
+    const auto summary = CUSBF_UNWRAP(filter.query_fastx_file_records(
+        file.path,
+        [&](const cusbf::FastxRecordView& record) {
             records.push_back(
                 StreamedRecord{
                     record.record_index,
@@ -92,7 +93,7 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsParsesWrappedFastqWithCrLf) {
                     std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
                 }
             );
-        });
+        }));
 
     ASSERT_EQ(records.size(), 1u);
     const auto& record = records.front();
@@ -115,8 +116,8 @@ TEST_F(BloomFilterTest, QueryFastxFileDoesNotCreateCrossRecordKmers) {
 
     const std::string sequenceA = "ACGTACGT";
     const std::string sequenceB = "TGCATGCA";
-    (void)filter.insert_sequence(sequenceA);
-    (void)filter.insert_sequence(sequenceB);
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceA));
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceB));
 
     const auto file = writeTempFile(
         ">first\n"
@@ -127,7 +128,7 @@ TEST_F(BloomFilterTest, QueryFastxFileDoesNotCreateCrossRecordKmers) {
         "TGCA\n"
     );
 
-    const auto report = filter.query_fastx_file(file.path);
+    const auto report = CUSBF_UNWRAP(filter.query_fastx_file(file.path));
 
     EXPECT_EQ(report.recordsQueried, 2);
     EXPECT_EQ(report.queriedBases, sequenceA.size() + sequenceB.size());
@@ -153,11 +154,12 @@ TEST_F(BloomFilterTest, RecordBatchInsertAndQueryInjectRecordBoundaries) {
         cuda::std::span<const cusbf::RecordRange>{ranges.data(), ranges.size()},
     };
 
-    const auto insertReport = filter.insert_record_batch(batch);
+    const auto insertReport = CUSBF_UNWRAP(filter.insert_record_batch(batch));
 
     std::vector<StreamedRecord> records;
-    const auto summary =
-        filter.query_record_batch(batch, [&](const cusbf::RecordQueryView& record) {
+    const auto summary = CUSBF_UNWRAP(filter.query_record_batch(
+        batch,
+        [&](const cusbf::RecordQueryView& record) {
             records.push_back(
                 StreamedRecord{
                     record.record_index,
@@ -169,7 +171,7 @@ TEST_F(BloomFilterTest, RecordBatchInsertAndQueryInjectRecordBoundaries) {
                     std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
                 }
             );
-        });
+        }));
 
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(insertReport.recordsIndexed, 2);
@@ -195,8 +197,8 @@ TEST_F(BloomFilterTest, TripletQueryFastxFileDoesNotCreateCrossRecordKmers) {
 
     const std::string sequenceA = "ACGTACGTT";
     const std::string sequenceB = "GGGTTTAAA";
-    (void)filter.insert_sequence(sequenceA);
-    (void)filter.insert_sequence(sequenceB);
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceA));
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceB));
 
     const auto file = writeTempFile(
         ">first\n"
@@ -205,7 +207,7 @@ TEST_F(BloomFilterTest, TripletQueryFastxFileDoesNotCreateCrossRecordKmers) {
         "GGGTTTAAA\n"
     );
 
-    const auto report = filter.query_fastx_file(file.path);
+    const auto report = CUSBF_UNWRAP(filter.query_fastx_file(file.path));
 
     EXPECT_EQ(report.recordsQueried, 2);
     EXPECT_EQ(report.queriedBases, sequenceA.size() + sequenceB.size());
@@ -218,8 +220,8 @@ TEST_F(BloomFilterTest, TripletQueryFastxFileRecordsDoesNotCreateCrossRecordKmer
 
     const std::string sequenceA = "ACGTACGTT";
     const std::string sequenceB = "GGGTTTAAA";
-    (void)filter.insert_sequence(sequenceA);
-    (void)filter.insert_sequence(sequenceB);
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceA));
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceB));
 
     const auto file = writeTempFile(
         ">first\n"
@@ -229,8 +231,9 @@ TEST_F(BloomFilterTest, TripletQueryFastxFileRecordsDoesNotCreateCrossRecordKmer
     );
 
     std::vector<StreamedRecord> records;
-    const auto summary =
-        filter.query_fastx_file_records(file.path, [&](const cusbf::FastxRecordView& record) {
+    const auto summary = CUSBF_UNWRAP(filter.query_fastx_file_records(
+        file.path,
+        [&](const cusbf::FastxRecordView& record) {
             records.push_back(
                 StreamedRecord{
                     record.record_index,
@@ -242,7 +245,7 @@ TEST_F(BloomFilterTest, TripletQueryFastxFileRecordsDoesNotCreateCrossRecordKmer
                     std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
                 }
             );
-        });
+        }));
 
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(summary.recordsQueried, 2);
@@ -268,8 +271,8 @@ TEST_F(BloomFilterTest, TripletQueryFastxDetailedDoesNotCreateCrossRecordKmers) 
 
     const std::string sequenceA = "ACGTACGTT";
     const std::string sequenceB = "GGGTTTAAA";
-    (void)filter.insert_sequence(sequenceA);
-    (void)filter.insert_sequence(sequenceB);
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceA));
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceB));
 
     const auto file = writeTempFile(
         ">first\n"
@@ -278,7 +281,7 @@ TEST_F(BloomFilterTest, TripletQueryFastxDetailedDoesNotCreateCrossRecordKmers) 
         "GGGTTTAAA\n"
     );
 
-    const auto report = filter.query_fastx_file_detailed(file.path);
+    const auto report = CUSBF_UNWRAP(filter.query_fastx_file_detailed(file.path));
 
     ASSERT_EQ(report.records.size(), 2u);
     EXPECT_EQ(report.summary.recordsQueried, 2);
@@ -309,8 +312,8 @@ TEST_F(BloomFilterTest, FastxReportsOnlyValidKmers) {
         "ACGTNACGTACGTA\n"
     );
 
-    const auto insertReport = filter.insert_fastx_file(file.path);
-    const auto queryReport = filter.query_fastx_file(file.path);
+    const auto insertReport = CUSBF_UNWRAP(filter.insert_fastx_file(file.path));
+    const auto queryReport = CUSBF_UNWRAP(filter.query_fastx_file(file.path));
 
     EXPECT_EQ(insertReport.recordsIndexed, 1);
     EXPECT_EQ(insertReport.indexedBases, 14);
@@ -325,7 +328,7 @@ TEST_F(BloomFilterTest, QueryFastxFileDetailedParsesWrappedFastqWithCrLf) {
     cusbf::filter<TestConfig> filter(1 << 12);
 
     const std::string sequence = "ACGTACGTACGT";
-    (void)filter.insert_sequence(sequence);
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequence));
 
     const auto file = writeTempFile(
         "@wrapped\r\n"
@@ -336,7 +339,7 @@ TEST_F(BloomFilterTest, QueryFastxFileDetailedParsesWrappedFastqWithCrLf) {
         "IIIIII\r\n"
     );
 
-    const auto report = filter.query_fastx_file_detailed(file.path);
+    const auto report = CUSBF_UNWRAP(filter.query_fastx_file_detailed(file.path));
 
     ASSERT_EQ(report.records.size(), 1u);
     const auto& record = report.records.front();
@@ -360,8 +363,8 @@ TEST_F(BloomFilterTest, QueryFastxRecordsPreservesWrappedFastaRecordOrder) {
 
     const std::string sequenceA = "ACGTACGT";
     const std::string sequenceB = "TGCATGCA";
-    (void)filter.insert_sequence(sequenceA);
-    (void)filter.insert_sequence(sequenceB);
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceA));
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceB));
 
     std::istringstream input(
         ">first\n"
@@ -373,8 +376,9 @@ TEST_F(BloomFilterTest, QueryFastxRecordsPreservesWrappedFastaRecordOrder) {
     );
 
     std::vector<StreamedRecord> records;
-    const auto summary =
-        filter.query_fastx_records(input, [&](const cusbf::FastxRecordView& record) {
+    const auto summary = CUSBF_UNWRAP(filter.query_fastx_records(
+        input,
+        [&](const cusbf::FastxRecordView& record) {
             records.push_back(
                 StreamedRecord{
                     record.record_index,
@@ -386,7 +390,7 @@ TEST_F(BloomFilterTest, QueryFastxRecordsPreservesWrappedFastaRecordOrder) {
                     std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
                 }
             );
-        });
+        }));
 
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(summary.recordsQueried, 2);
@@ -417,8 +421,8 @@ TEST_F(BloomFilterTest, QueryFastxDetailedPreservesWrappedFastaRecordOrder) {
 
     const std::string sequenceA = "ACGTACGT";
     const std::string sequenceB = "TGCATGCA";
-    (void)filter.insert_sequence(sequenceA);
-    (void)filter.insert_sequence(sequenceB);
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceA));
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceB));
 
     std::istringstream input(
         ">first\n"
@@ -429,7 +433,7 @@ TEST_F(BloomFilterTest, QueryFastxDetailedPreservesWrappedFastaRecordOrder) {
         "TGCA\n"
     );
 
-    const auto report = filter.query_fastx_detailed(input);
+    const auto report = CUSBF_UNWRAP(filter.query_fastx_detailed(input));
 
     ASSERT_EQ(report.records.size(), 2u);
     const auto& first = report.records[0];
@@ -468,9 +472,9 @@ TEST_F(BloomFilterTest, FastxDetailedQueryReportsInvalidWindowsAsMisses) {
         "ACGTNACGTACGTA\n"
     );
 
-    (void)filter.insert_fastx_file(file.path);
+    (void)CUSBF_UNWRAP(filter.insert_fastx_file(file.path));
 
-    const auto report = filter.query_fastx_file_detailed(file.path);
+    const auto report = CUSBF_UNWRAP(filter.query_fastx_file_detailed(file.path));
 
     ASSERT_EQ(report.records.size(), 1u);
     const auto& record = report.records.front();
@@ -496,11 +500,12 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsReportInvalidWindowsAsMisses) {
         "ACGTNACGTACGTA\n"
     );
 
-    (void)filter.insert_fastx_file(file.path);
+    (void)CUSBF_UNWRAP(filter.insert_fastx_file(file.path));
 
     std::vector<StreamedRecord> records;
-    const auto summary =
-        filter.query_fastx_file_records(file.path, [&](const cusbf::FastxRecordView& record) {
+    const auto summary = CUSBF_UNWRAP(filter.query_fastx_file_records(
+        file.path,
+        [&](const cusbf::FastxRecordView& record) {
             records.push_back(
                 StreamedRecord{
                     record.record_index,
@@ -512,7 +517,7 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsReportInvalidWindowsAsMisses) {
                     std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
                 }
             );
-        });
+        }));
 
     ASSERT_EQ(records.size(), 1u);
     const auto& record = records.front();
@@ -540,9 +545,9 @@ TEST_F(BloomFilterTest, FastxDetailedAndAggregateReportsMatch) {
         "TGCATGCATGCA\n"
     );
 
-    const auto insertReport = filter.insert_fastx_file(file.path);
-    const auto aggregate = filter.query_fastx_file(file.path);
-    const auto detailed = filter.query_fastx_file_detailed(file.path);
+    const auto insertReport = CUSBF_UNWRAP(filter.insert_fastx_file(file.path));
+    const auto aggregate = CUSBF_UNWRAP(filter.query_fastx_file(file.path));
+    const auto detailed = CUSBF_UNWRAP(filter.query_fastx_file_detailed(file.path));
 
     EXPECT_EQ(aggregate.recordsQueried, detailed.summary.recordsQueried);
     EXPECT_EQ(aggregate.queriedBases, detailed.summary.queriedBases);
@@ -592,11 +597,11 @@ TEST_F(BloomFilterTest, ForcedFastxChunkFlushPreservesRecordOrderAndCounts) {
         "TGCATGCA\n"
     );
 
-    const auto insertReport = filter.insert_fastx_file(file.path, fill_fraction);
-    const auto aggregate = filter.query_fastx_file(file.path, fill_fraction);
+    const auto insertReport = CUSBF_UNWRAP(filter.insert_fastx_file(file.path, fill_fraction));
+    const auto aggregate = CUSBF_UNWRAP(filter.query_fastx_file(file.path, fill_fraction));
 
     std::vector<StreamedRecord> streamedRecords;
-    const auto streamed = filter.query_fastx_file_records(
+    const auto streamed = CUSBF_UNWRAP(filter.query_fastx_file_records(
         file.path,
         [&](const cusbf::FastxRecordView& record) {
             streamedRecords.push_back(
@@ -612,8 +617,8 @@ TEST_F(BloomFilterTest, ForcedFastxChunkFlushPreservesRecordOrderAndCounts) {
             );
         },
         fill_fraction
-    );
-    const auto detailed = filter.query_fastx_file_detailed(file.path, fill_fraction);
+    ));
+    const auto detailed = CUSBF_UNWRAP(filter.query_fastx_file_detailed(file.path, fill_fraction));
 
     ASSERT_EQ(streamedRecords.size(), 3u);
     ASSERT_EQ(detailed.records.size(), 3u);
@@ -671,5 +676,7 @@ TEST_F(BloomFilterTest, MalformedFastqThrowsOnQualityLengthMismatch) {
         "IIIIIII\n"
     );
 
-    EXPECT_THROW((void)filter.query_fastx_file(file.path), std::runtime_error);
+    const auto query_result = filter.query_fastx_file(file.path);
+    ASSERT_FALSE(query_result);
+    EXPECT_EQ(query_result.error().category, cusbf::ErrorCategory::fastx_parse);
 }

@@ -1,26 +1,19 @@
 #pragma once
 
-#include <cstdlib>
-#include <cstring>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+
+#include <cusbf/detail/host_parse.hpp>
 
 namespace cusbf::detail {
 
 static_assert(sizeof(size_t) == sizeof(uint64_t), "cuSBF assumes size_t is 64-bit");
 
 [[nodiscard]] inline size_t parse_host_chunk_max_bytes(const char* env_name) {
-    const char* value = std::getenv(env_name);
-    if (value == nullptr || value[0] == '\0') {
-        return 0;
-    }
-
-    char* end = nullptr;
-    const auto mebibytes = std::strtoull(value, &end, 10);
-    if (end == value || mebibytes == 0) {
+    const uint64_t mebibytes = parse_env_mebibytes(getenv_value(env_name));
+    if (mebibytes == 0) {
         return 0;
     }
     return static_cast<size_t>(mebibytes) << 20;

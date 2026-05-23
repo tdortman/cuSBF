@@ -58,7 +58,7 @@ void benchmarkCuSbfInsert(uint64_t capacity, double load_factor) {
     ));
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
-    filter.clear();
+    (void)filter.clear();
     benchmark::DoNotOptimize(filter.insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(input.d_sequence.data()), input.sequenceLength
@@ -80,12 +80,12 @@ void benchmarkCuSbfQuery(uint64_t capacity, double load_factor) {
     ));
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
-    filter.contains_sequence_async(
+    cusbf::require_void(filter.contains_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(input.d_sequence.data()), input.sequenceLength
         },
         cusbf::device_span<uint8_t>{thrust::raw_pointer_cast(d_output.data()), d_output.size()}
-    );
+    ));
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     benchmark::DoNotOptimize(thrust::raw_pointer_cast(d_output.data()));
 }
@@ -98,7 +98,7 @@ void benchmarkCucoBloomInsert(uint64_t capacity, double load_factor) {
     filter.add(input.d_packed_kmers.begin(), input.d_packed_kmers.end());
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
-    filter.clear();
+    (void)filter.clear();
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     filter.add(input.d_packed_kmers.begin(), input.d_packed_kmers.end());
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
@@ -130,7 +130,7 @@ void benchmarkCuckooGpuInsert(uint64_t capacity, double load_factor) {
     filter.insertMany(input.d_packed_kmers);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
-    filter.clear();
+    (void)filter.clear();
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     filter.insertMany(input.d_packed_kmers);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());

@@ -181,7 +181,7 @@ class ShSweepFixture : public bm::Fixture {
 template <typename Fixture>
 void runShSweepInsert(Fixture& fixture, benchmark::State& state) {
     for (auto _ : state) {
-        fixture.filter->clear();
+        (void)CUSBF_UNWRAP(fixture.filter->clear());
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fixture.timer.start();
@@ -199,7 +199,7 @@ void runShSweepInsert(Fixture& fixture, benchmark::State& state) {
 
 template <typename Fixture>
 void runShSweepQuery(Fixture& fixture, benchmark::State& state) {
-    fixture.filter->clear();
+    (void)CUSBF_UNWRAP(fixture.filter->clear());
     benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
@@ -210,7 +210,7 @@ void runShSweepQuery(Fixture& fixture, benchmark::State& state) {
 
     for (auto _ : state) {
         fixture.timer.start();
-        fixture.filter->contains_sequence_async(
+        cusbf::require_void(fixture.filter->contains_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(g_fastxData->d_querySequence.data()),
                 g_fastxData->d_querySequence.size()
@@ -218,7 +218,7 @@ void runShSweepQuery(Fixture& fixture, benchmark::State& state) {
             cusbf::device_span<uint8_t>{
                 thrust::raw_pointer_cast(fixture.d_output.data()), fixture.d_output.size()
             }
-        );
+        ));
         const double elapsed = fixture.timer.elapsed();
         state.SetIterationTime(elapsed);
         benchmark::DoNotOptimize(thrust::raw_pointer_cast(fixture.d_output.data()));
@@ -228,7 +228,7 @@ void runShSweepQuery(Fixture& fixture, benchmark::State& state) {
 
 template <typename Fixture>
 void runShSweepFpr(Fixture& fixture, benchmark::State& state) {
-    fixture.filter->clear();
+    (void)CUSBF_UNWRAP(fixture.filter->clear());
     benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
@@ -239,7 +239,7 @@ void runShSweepFpr(Fixture& fixture, benchmark::State& state) {
 
     for (auto _ : state) {
         fixture.timer.start();
-        fixture.filter->contains_sequence_async(
+        cusbf::require_void(fixture.filter->contains_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(g_fastxData->d_fprSequence.data()),
                 g_fastxData->d_fprSequence.size()
@@ -247,7 +247,7 @@ void runShSweepFpr(Fixture& fixture, benchmark::State& state) {
             cusbf::device_span<uint8_t>{
                 thrust::raw_pointer_cast(fixture.d_output.data()), g_fastxData->fprKmers
             }
-        );
+        ));
         const double elapsed = fixture.timer.elapsed();
         state.SetIterationTime(elapsed);
         benchmark::DoNotOptimize(thrust::raw_pointer_cast(fixture.d_output.data()));

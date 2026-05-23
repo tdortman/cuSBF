@@ -144,7 +144,7 @@ class CuckooGpuFixture : public bm::Fixture {
 
 void runCucoInsertBenchmark(auto& fixture, bm::State& state) {
     for (auto _ : state) {
-        fixture.filter->clear();
+        (void)fixture.filter->clear();
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fixture.timer.start();
@@ -166,7 +166,7 @@ void runCucoInsertBenchmark(auto& fixture, bm::State& state) {
 }
 
 void runCucoQueryBenchmark(auto& fixture, bm::State& state) {
-    fixture.filter->clear();
+    (void)fixture.filter->clear();
     benchmark_common::gpuEncodePackedKmers<
         std::remove_reference_t<decltype(fixture)>::k,
         typename std::remove_reference_t<decltype(fixture)>::Alphabet>(
@@ -204,7 +204,7 @@ void runCucoQueryBenchmark(auto& fixture, bm::State& state) {
 void runCucoFprBenchmark(auto& fixture, bm::State& state) {
     fixture.benchData->ensureFprData();
 
-    fixture.filter->clear();
+    (void)fixture.filter->clear();
     fixture.filter->add(
         fixture.benchData->d_fprInsertPackedKmers.begin(),
         fixture.benchData->d_fprInsertPackedKmers.end()
@@ -233,7 +233,7 @@ void runCucoFprBenchmark(auto& fixture, bm::State& state) {
 
 void runCuckooGpuInsertBenchmark(auto& fixture, bm::State& state) {
     for (auto _ : state) {
-        fixture.filter->clear();
+        (void)fixture.filter->clear();
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fixture.timer.start();
@@ -252,7 +252,7 @@ void runCuckooGpuInsertBenchmark(auto& fixture, bm::State& state) {
 }
 
 void runCuckooGpuQueryBenchmark(auto& fixture, bm::State& state) {
-    fixture.filter->clear();
+    (void)fixture.filter->clear();
     benchmark_common::gpuEncodePackedKmers<
         std::remove_reference_t<decltype(fixture)>::k,
         typename std::remove_reference_t<decltype(fixture)>::Alphabet>(
@@ -283,7 +283,7 @@ void runCuckooGpuQueryBenchmark(auto& fixture, bm::State& state) {
 void runCuckooGpuFprBenchmark(auto& fixture, bm::State& state) {
     fixture.benchData->ensureFprData();
 
-    fixture.filter->clear();
+    (void)fixture.filter->clear();
     fixture.filter->insertMany(fixture.benchData->d_fprInsertPackedKmers);
 
     uint64_t falsePositives = 0;

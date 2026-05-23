@@ -1,43 +1,16 @@
 #pragma once
 
-#include <cuda_runtime.h>
+#include <cusbf/error.hpp>
 
 #include <stdexcept>
-#include <string>
 
-namespace cusbf {
-
-/// @brief Exception thrown on CUDA runtime errors.
-class CudaError : public std::runtime_error {
-   public:
-    /**
-     * @brief Constructs an error describing @p code at @p file:@p line.
-     *
-     * Prefer @ref CUSBF_CUDA_CALL rather than throwing directly.
-     */
-    CudaError(cudaError_t code, const char* file, int line)
-        : std::runtime_error(
-              std::string(file) + ":" + std::to_string(line) + " " + cudaGetErrorString(code)
-          ),
-          code_(code) {}
-
-    /// @brief CUDA error code that triggered this exception.
-    [[nodiscard]] cudaError_t code() const noexcept {
-        return code_;
-    }
-
-   private:
-    cudaError_t code_;
-};
-
-}  // namespace cusbf
-
-/// @brief Macro for checking CUDA runtime errors. Safe to include from host C++ translation units.
-#define CUSBF_CUDA_CALL(err)                              \
-    do {                                                  \
-        cudaError_t err_ = (err);                         \
-        if (err_ == cudaSuccess) [[likely]] {             \
-            break;                                        \
-        }                                                 \
-        throw cusbf::CudaError(err_, __FILE__, __LINE__); \
+/// @brief Checks a CUDA runtime call and throws @c std::runtime_error on failure.
+///
+/// Use in non-@ref cusbf::Result functions (benchmarks, RAII helpers). Prefer @ref CUSBF_CUDA_TRY
+/// inside functions that return @ref cusbf::Result.
+#define CUSBF_CUDA_CALL(err)                                                    \
+    do {                                                                        \
+        if (cudaError_t _cusbf_err = (err); _cusbf_err != cudaSuccess) {        \
+            throw std::runtime_error(::cusbf::Error::cuda(_cusbf_err).message); \
+        }                                                                       \
     } while (0)

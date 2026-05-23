@@ -2,7 +2,7 @@
 
 #include <cuda/std/bit>
 
-#include "Alphabet.cuh"
+#include <cusbf/Alphabet.cuh>
 
 namespace cusbf {
 

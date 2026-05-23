@@ -1,12 +1,15 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
+#include <format>
 #include <fstream>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <cusbf/error.hpp>
 
 #if defined(__linux__)
     #include <fcntl.h>
@@ -57,9 +60,11 @@ class FastxFileBuffer {
      * @param path Path to a non-gzip FASTA/FASTQ file.
      * @return Owning buffer with @ref data() spanning the full file.
      */
-    [[nodiscard]] static std::unique_ptr<FastxFileBuffer> load(std::string_view path) {
+    [[nodiscard]] static Result<std::unique_ptr<FastxFileBuffer>> load(
+        const std::filesystem::path& path
+    ) {
         auto buffer = std::make_unique<FastxFileBuffer>();
-        buffer->load_from_path(path);
+        CUSBF_TRY(buffer->load_from_path(path));
         return buffer;
     }
 
@@ -96,24 +101,28 @@ class FastxFileBuffer {
         size_ = 0;
     }
 
-    void load_from_path(std::string_view path) {
-        const std::string path_string(path);
+    [[nodiscard]] Result<void> load_from_path(const std::filesystem::path& path) {
+        const std::string path_string = path.string();
 
 #if defined(__linux__)
         const int fd = ::open(path_string.c_str(), O_RDONLY);
         if (fd == -1) {
-            throw std::runtime_error("Failed to open FASTA/FASTQ file: " + path_string);
+            return cuda::std::unexpected(
+                Error::io(std::format("Failed to open FASTA/FASTQ file: {}", path_string))
+            );
         }
 
         struct stat file_status{};
         if (::fstat(fd, &file_status) != 0 || file_status.st_size < 0) {
             ::close(fd);
-            throw std::runtime_error("Failed to stat FASTA/FASTQ file: " + path_string);
+            return cuda::std::unexpected(
+                Error::io(std::format("Failed to stat FASTA/FASTQ file: {}", path_string))
+            );
         }
 
         if (file_status.st_size == 0) {
             ::close(fd);
-            return;
+            return {};
         }
 
         mapped_size_ = static_cast<size_t>(file_status.st_size);
@@ -122,38 +131,47 @@ class FastxFileBuffer {
         if (mapped_ == MAP_FAILED) {
             mapped_ = nullptr;
             mapped_size_ = 0;
-            throw std::runtime_error("Failed to mmap FASTA/FASTQ file: " + path_string);
+            return cuda::std::unexpected(
+                Error::io(std::format("Failed to mmap FASTA/FASTQ file: {}", path_string))
+            );
         }
 
         data_ = static_cast<const char*>(mapped_);
         size_ = mapped_size_;
-        return;
+        return {};
 #endif
 
         std::ifstream input(path_string, std::ios::binary);
         if (!input.is_open()) {
-            throw std::runtime_error("Failed to open FASTA/FASTQ file: " + path_string);
+            return cuda::std::unexpected(
+                Error::io(std::format("Failed to open FASTA/FASTQ file: {}", path_string))
+            );
         }
         input.seekg(0, std::ios::end);
         const auto file_size = input.tellg();
         if (file_size < 0) {
-            throw std::runtime_error("Failed to size FASTA/FASTQ file: " + path_string);
+            return cuda::std::unexpected(
+                Error::io(std::format("Failed to size FASTA/FASTQ file: {}", path_string))
+            );
         }
         owned_storage_.resize(static_cast<size_t>(file_size));
         input.seekg(0, std::ios::beg);
         if (!owned_storage_.empty()) {
             input.read(owned_storage_.data(), static_cast<std::streamsize>(owned_storage_.size()));
             if (!input) {
-                throw std::runtime_error("Failed to read FASTA/FASTQ file: " + path_string);
+                return cuda::std::unexpected(
+                    Error::io(std::format("Failed to read FASTA/FASTQ file: {}", path_string))
+                );
             }
         }
         data_ = owned_storage_.data();
         size_ = owned_storage_.size();
+        return {};
     }
 };
 
 /// @brief True when @p path is not gzip-compressed (mmap path is usable).
-[[nodiscard]] inline bool fastx_file_supports_memory_map(std::string_view path) {
+[[nodiscard]] inline bool fastx_file_supports_memory_map(const std::filesystem::path& path) {
     return !isGzipFile(path);
 }
 

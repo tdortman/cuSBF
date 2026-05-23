@@ -1,12 +1,13 @@
 #pragma once
 
-#include <cstdlib>
-#include <cstring>
-
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
+
+#include <cusbf/detail/host_parse.hpp>
 
 #if defined(__linux__)
     #include <sys/stat.h>
@@ -19,14 +20,13 @@ namespace cusbf::detail {
 inline constexpr size_t kDefaultFastxHostRamSlackBytes = 4u << 30;
 
 [[nodiscard]] inline size_t fastx_host_ram_slack_bytes() {
-    const char* value = std::getenv("CUSBF_FASTX_HOST_RAM_SLACK_MB");
-    if (value == nullptr || value[0] == '\0') {
+    const std::string_view value = getenv_value("CUSBF_FASTX_HOST_RAM_SLACK_MB");
+    if (value.empty()) {
         return kDefaultFastxHostRamSlackBytes;
     }
 
-    char* end = nullptr;
-    const auto mebibytes = std::strtoull(value, &end, 10);
-    if (end == value) {
+    const uint64_t mebibytes = parse_env_mebibytes(value);
+    if (mebibytes == 0) {
         return kDefaultFastxHostRamSlackBytes;
     }
     return static_cast<size_t>(mebibytes) << 20;
@@ -46,14 +46,10 @@ inline constexpr size_t kDefaultFastxHostRamSlackBytes = 4u << 30;
 
 /// @brief Upper bound on file bytes that may be mmap'd (env cap and available RAM minus slack).
 [[nodiscard]] inline uint64_t fastx_memory_map_max_bytes() {
-    const char* value = std::getenv("CUSBF_FASTX_MMAP_MAX_MB");
     uint64_t cap_bytes = UINT64_MAX;
-    if (value != nullptr && value[0] != '\0') {
-        char* end = nullptr;
-        const auto mebibytes = std::strtoull(value, &end, 10);
-        if (end != value) {
-            cap_bytes = mebibytes << 20;
-        }
+    if (const uint64_t mebibytes = parse_env_mebibytes(getenv_value("CUSBF_FASTX_MMAP_MAX_MB"));
+        mebibytes != 0) {
+        cap_bytes = mebibytes << 20;
     }
 
     const size_t available = query_available_host_bytes();
@@ -67,9 +63,9 @@ inline constexpr size_t kDefaultFastxHostRamSlackBytes = 4u << 30;
 }
 
 /// @brief True when uncompressed @p path size is within @ref fastx_memory_map_max_bytes.
-[[nodiscard]] inline bool fastx_file_fits_in_memory(std::string_view path) {
+[[nodiscard]] inline bool fastx_file_fits_in_memory(const std::filesystem::path& path) {
 #if defined(__linux__)
-    const std::string path_string(path);
+    const std::string path_string = path.string();
     struct stat file_status{};
     if (::stat(path_string.c_str(), &file_status) != 0 || file_status.st_size < 0) {
         return false;

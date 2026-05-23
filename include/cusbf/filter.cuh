@@ -20,30 +20,30 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-#include "Alphabet.cuh"
-#include "config.cuh"
-#include "detail/chunk_stream_pair.cuh"
-#include "detail/count_positive_kmers.cuh"
-#include "detail/fastx_chunk.cuh"
-#include "detail/fastx_dispatch.hpp"
-#include "detail/fastx_host_limits.cuh"
-#include "detail/fastx_pinned_buffer.hpp"
-#include "detail/filter_impl.cuh"
-#include "detail/kernels.cuh"
-#include "detail/sequence_kmer.cuh"
-#include "device_span.cuh"
-#include "Fastx.hpp"
-#include "filter_ref.cuh"
-#include "hashutil.cuh"
-#include "helpers.cuh"
-#include "normalized_record_batch.hpp"
+#include <cusbf/Alphabet.cuh>
+#include <cusbf/Fastx.hpp>
+#include <cusbf/config.cuh>
+#include <cusbf/detail/chunk_stream_pair.cuh>
+#include <cusbf/detail/count_positive_kmers.cuh>
+#include <cusbf/detail/fastx_chunk.cuh>
+#include <cusbf/detail/fastx_dispatch.hpp>
+#include <cusbf/detail/fastx_host_limits.cuh>
+#include <cusbf/detail/fastx_pinned_buffer.hpp>
+#include <cusbf/detail/filter_impl.cuh>
+#include <cusbf/detail/kernels.cuh>
+#include <cusbf/detail/sequence_kmer.cuh>
+#include <cusbf/device_span.cuh>
+#include <cusbf/error.hpp>
+#include <cusbf/filter_ref.cuh>
+#include <cusbf/hashutil.cuh>
+#include <cusbf/helpers.cuh>
+#include <cusbf/normalized_record_batch.hpp>
 
 namespace cusbf {
 
@@ -120,21 +120,23 @@ class filter {
     };
 
     template <typename FastxReaderType>
-    [[nodiscard]] static bool collect_next_fastx_record(
+    [[nodiscard]] static Result<bool> collect_next_fastx_record(
         FastxReaderType& reader,
         detail::FastxRecord& record,
         FastxChunkAssembly& chunk
     ) {
         if constexpr (std::is_same_v<std::decay_t<FastxReaderType>, detail::FastxBufferReader>) {
-            if (const auto range =
-                    reader.appendNextRecord(record, chunk.sequence, chunk.external_sequence_)) {
-                chunk.ranges.push_back(*range);
-                return true;
+            const auto range =
+                CUSBF_TRY(reader.appendNextRecord(record, chunk.sequence, chunk.external_sequence_));
+            if (!range) {
+                return false;
             }
-            return false;
+            chunk.ranges.push_back(*range);
+            return true;
         }
 
-        if (!reader.nextRecord(record)) {
+        const bool has_record = CUSBF_TRY(reader.nextRecord(record));
+        if (!has_record) {
             return false;
         }
         chunk.appendRecord(record.sequence);
@@ -189,7 +191,7 @@ class filter {
           ),
           filter_bits_(num_shards_ * Config::filterBlockBits),
           d_shards_(num_shards_) {
-        clear();
+        CUSBF_UNWRAP(clear());
     }
 
     /// Non-copyable (owns device shard storage).
@@ -224,16 +226,17 @@ class filter {
      * @param stream    CUDA stream to use (default: null stream).
      * @return Number of k-mer windows attempted (sequences shorter than @c k yield 0).
      */
-    [[nodiscard]] uint64_t
+    [[nodiscard]] Result<uint64_t>
     insert_sequence(std::string_view sequence, cuda::stream_ref stream = cudaStream_t{}) {
         if (record_symbol_count(sequence.size()) < Config::k) {
             return 0;
         }
 
         const uint64_t totalKmers = record_kmer_count(sequence.size());
-        const auto d_sequence = staged_sequence_view({sequence.data(), sequence.size()}, stream);
-        launch_insert_sequence(d_sequence, stream);
-        stream.sync();
+        const auto d_sequence =
+            CUSBF_TRY(staged_sequence_view({sequence.data(), sequence.size()}, stream));
+        CUSBF_TRY(launch_insert_sequence(d_sequence, stream));
+        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
         return totalKmers;
     }
 
@@ -247,7 +250,7 @@ class filter {
      * @param stream      CUDA stream to use.
      * @return Number of k-mers attempted.
      */
-    [[nodiscard]] uint64_t insert_sequence_async(
+    [[nodiscard]] Result<uint64_t> insert_sequence_async(
         device_span<const char> d_sequence,
         cuda::stream_ref stream = cudaStream_t{}
     ) {
@@ -256,7 +259,7 @@ class filter {
             return 0;
         }
 
-        launch_insert_sequence(d_sequence, stream);
+        CUSBF_TRY(launch_insert_sequence(d_sequence, stream));
         return totalKmers;
     }
 
@@ -274,11 +277,11 @@ class filter {
      * @param stream  CUDA stream to use.
      * @return Report summarising records indexed, bases processed, and k-mers inserted.
      */
-    [[nodiscard]] FastxInsertReport
+    [[nodiscard]] Result<FastxInsertReport>
     insert_record_batch(RecordBatchView batch, cuda::stream_ref stream = cudaStream_t{}) {
-        normalize_record_batch_into<Config>(
+        CUSBF_TRY(normalize_record_batch_into<Config>(
             batch, normalized_sequence_scratch_, normalized_records_scratch_
-        );
+        ));
         FastxInsertReport report;
         report.recordsIndexed = normalized_records_scratch_.size();
         for (const NormalizedRecord& record : normalized_records_scratch_) {
@@ -286,11 +289,11 @@ class filter {
             report.insertedKmers += record.valid_kmers;
         }
         if (!normalized_sequence_scratch_.empty()) {
-            const auto d_sequence = staged_sequence_view(
+            const auto d_sequence = CUSBF_TRY(staged_sequence_view(
                 {normalized_sequence_scratch_.data(), normalized_sequence_scratch_.size()}, stream
-            );
-            (void)insert_sequence_async(d_sequence, stream);
-            stream.sync();
+            ));
+            CUSBF_TRY(insert_sequence_async(d_sequence, stream));
+            CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
         }
         release_fastx_staging_scratch();
         return report;
@@ -310,7 +313,7 @@ class filter {
      * @param stream       CUDA stream to use.
      * @return Report summarising records indexed, bases processed, and k-mers inserted.
      */
-    [[nodiscard]] FastxInsertReport insert_fastx(
+    [[nodiscard]] Result<FastxInsertReport> insert_fastx(
         std::istream& input,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
@@ -331,21 +334,19 @@ class filter {
      * @param stream         Optional CUDA stream, default uses an internal pipelined path.
      * @return Report summarising records indexed, bases processed, and k-mers inserted.
      */
-    [[nodiscard]] FastxInsertReport insert_fastx_file(
+    [[nodiscard]] Result<FastxInsertReport> insert_fastx_file(
         std::string_view path,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
     ) {
-        FastxInsertReport report;
-        detail::dispatch_fastx_file<Config>(
+        return detail::dispatch_fastx_file<Config>(
             path,
             detail::fastx_chunk_mode::insert,
             fill_fraction,
             [&](auto& reader, auto dispatch_path) {
-                report = insert_fastx_reader(reader, path, fill_fraction, stream, dispatch_path);
+                return insert_fastx_reader(reader, path, fill_fraction, stream, dispatch_path);
             }
         );
-        return report;
     }
 
     /**
@@ -358,16 +359,16 @@ class filter {
      * @param d_output    Per-k-mer result buffer (must hold kmerCount() bytes).
      * @param stream      CUDA stream to use.
      */
-    void contains_sequence_async(
+    [[nodiscard]] Result<void> contains_sequence_async(
         device_span<const char> d_sequence,
         device_span<uint8_t> d_output,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
         if (sequence_kmer_count(d_sequence) == 0) {
-            return;
+            return {};
         }
 
-        launch_contains_sequence(d_sequence, d_output, stream);
+        return launch_contains_sequence(d_sequence, d_output, stream);
     }
 
     /**
@@ -381,22 +382,23 @@ class filter {
      * @param stream    CUDA stream to use.
      * @return Per-k-mer membership results (empty if sequence length < k).
      */
-    [[nodiscard]] std::vector<uint8_t>
+    [[nodiscard]] Result<std::vector<uint8_t>>
     contains_sequence(std::string_view sequence, cuda::stream_ref stream = cudaStream_t{}) const {
         if (record_symbol_count(sequence.size()) < Config::k) {
-            return {};
+            return std::vector<uint8_t>{};
         }
 
         std::vector<uint8_t> output(record_kmer_count(sequence.size()));
 
-        const auto d_sequence = staged_sequence_view({sequence.data(), sequence.size()}, stream);
+        const auto d_sequence =
+            CUSBF_TRY(staged_sequence_view({sequence.data(), sequence.size()}, stream));
         ensure_result_capacity(output.size());
-        launch_contains_sequence(
+        CUSBF_TRY(launch_contains_sequence(
             d_sequence,
             device_span<uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), output.size()},
             stream
-        );
-        CUSBF_CUDA_CALL(cudaMemcpyAsync(
+        ));
+        CUSBF_CUDA_TRY(cudaMemcpyAsync(
             output.data(),
             thrust::raw_pointer_cast(d_resultBuffer_.data()),
             output.size() * sizeof(uint8_t),
@@ -404,7 +406,7 @@ class filter {
             stream.get()
         ));
 
-        stream.sync();
+        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
         return output;
     }
 
@@ -422,7 +424,7 @@ class filter {
      * @param stream  CUDA stream to use.
      * @return Aggregate query summary for the whole batch.
      */
-    [[nodiscard]] FastxQueryReport
+    [[nodiscard]] Result<FastxQueryReport>
     query_record_batch(RecordBatchView batch, cuda::stream_ref stream = cudaStream_t{}) const {
         return query_record_batch_aggregate(batch, stream);
     }
@@ -441,14 +443,14 @@ class filter {
      * @return Aggregate query summary for the whole batch.
      */
     template <typename Consumer>
-    [[nodiscard]] FastxQueryReport query_record_batch(
+    [[nodiscard]] Result<FastxQueryReport> query_record_batch(
         RecordBatchView batch,
         Consumer&& consume,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
-        normalize_record_batch_into<Config>(
+        CUSBF_TRY(normalize_record_batch_into<Config>(
             batch, normalized_sequence_scratch_, normalized_records_scratch_
-        );
+        ));
         return query_normalized_record_batch_with_hits(
             batch.sequence, std::forward<Consumer>(consume), stream
         );
@@ -466,7 +468,7 @@ class filter {
      * @return Aggregate query summary for the whole stream.
      * @see insert_fastx
      */
-    [[nodiscard]] FastxQueryReport query_fastx(
+    [[nodiscard]] Result<FastxQueryReport> query_fastx(
         std::istream& input,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
@@ -486,21 +488,19 @@ class filter {
      * @return Aggregate query summary for the whole file.
      * @see insert_fastx_file for dispatch and chunking behavior.
      */
-    [[nodiscard]] FastxQueryReport query_fastx_file(
+    [[nodiscard]] Result<FastxQueryReport> query_fastx_file(
         std::string_view path,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
-        FastxQueryReport report;
-        detail::dispatch_fastx_file<Config>(
+        return detail::dispatch_fastx_file<Config>(
             path,
             detail::fastx_chunk_mode::query,
             fill_fraction,
             [&](auto& reader, auto dispatch_path) {
-                report = query_fastx_reader(reader, path, fill_fraction, stream, dispatch_path);
+                return query_fastx_reader(reader, path, fill_fraction, stream, dispatch_path);
             }
         );
-        return report;
     }
 
     /**
@@ -518,7 +518,7 @@ class filter {
      * @return Aggregate query summary for the whole stream.
      */
     template <typename Consumer>
-    [[nodiscard]] FastxQueryReport query_fastx_records(
+    [[nodiscard]] Result<FastxQueryReport> query_fastx_records(
         std::istream& input,
         Consumer&& consume,
         double fill_fraction = 0.7,
@@ -546,24 +546,22 @@ class filter {
      * @see query_fastx_records
      */
     template <typename Consumer>
-    [[nodiscard]] FastxQueryReport query_fastx_file_records(
+    [[nodiscard]] Result<FastxQueryReport> query_fastx_file_records(
         std::string_view path,
         Consumer&& consume,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
-        FastxQueryReport report;
-        detail::dispatch_fastx_file<Config>(
+        return detail::dispatch_fastx_file<Config>(
             path,
             detail::fastx_chunk_mode::query,
             fill_fraction,
             [&](auto& reader, auto dispatch_path) {
-                report = query_fastx_records_stream(
+                return query_fastx_records_stream(
                     reader, path, consume, fill_fraction, stream, dispatch_path
                 );
             }
         );
-        return report;
     }
 
     /**
@@ -581,7 +579,7 @@ class filter {
      * @return Aggregate and per-record query results.
      * @see query_fastx
      */
-    [[nodiscard]] FastxDetailedQueryReport query_fastx_detailed(
+    [[nodiscard]] Result<FastxDetailedQueryReport> query_fastx_detailed(
         std::istream& input,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
@@ -602,22 +600,21 @@ class filter {
      * @return Aggregate and per-record query results.
      * @see query_fastx_detailed
      */
-    [[nodiscard]] FastxDetailedQueryReport query_fastx_file_detailed(
+    [[nodiscard]] Result<FastxDetailedQueryReport> query_fastx_file_detailed(
         std::string_view path,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
-        FastxDetailedQueryReport report;
-        detail::dispatch_fastx_file<Config>(
+        return detail::dispatch_fastx_file<Config>(
             path,
             detail::fastx_chunk_mode::query,
             fill_fraction,
             [&](auto& reader, auto dispatch_path) {
-                report =
-                    query_fastx_detailed_stream(reader, path, fill_fraction, stream, dispatch_path);
+                return query_fastx_detailed_stream(
+                    reader, path, fill_fraction, stream, dispatch_path
+                );
             }
         );
-        return report;
     }
 
     /**
@@ -625,15 +622,16 @@ class filter {
      *
      * @param stream CUDA stream to use.
      */
-    void clear(cuda::stream_ref stream = cudaStream_t{}) {
-        CUSBF_CUDA_CALL(cudaMemsetAsync(
+    [[nodiscard]] Result<void> clear(cuda::stream_ref stream = cudaStream_t{}) {
+        CUSBF_CUDA_TRY(cudaMemsetAsync(
             thrust::raw_pointer_cast(d_shards_.data()),
             0,
             d_shards_.size() * sizeof(block_type),
             stream.get()
         ));
 
-        stream.sync();
+        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+        return {};
     }
 
     /**
@@ -715,18 +713,19 @@ class filter {
         release_fastx_device_staging();
     }
 
-    static void normalize_record_batch_into_pinned(
+    static Result<void> normalize_record_batch_into_pinned(
         RecordBatchView batch,
         detail::FastxPinnedSequenceBuffer& sequence_out,
         std::vector<NormalizedRecord>& records_out
     ) {
         const uint64_t estimated_bytes = detail::estimate_normalized_batch_bytes<Config>(batch);
-        sequence_out.reserve(static_cast<size_t>(estimated_bytes));
+        CUSBF_TRY(sequence_out.reserve(static_cast<size_t>(estimated_bytes)));
         size_t sequence_out_bytes = 0;
         detail::normalize_record_batch_into_buffer<Config>(
             batch, sequence_out.data(), sequence_out_bytes, records_out
         );
-        sequence_out.set_size(sequence_out_bytes);
+        CUSBF_TRY(sequence_out.set_size(sequence_out_bytes));
+        return {};
     }
 
     /// @brief Returns the total size of all shard storage in bytes.
@@ -775,11 +774,11 @@ class filter {
      * @param stream CUDA stream to use.
      * @return Aggregate query summary for the whole batch.
      */
-    [[nodiscard]] FastxQueryReport
+    [[nodiscard]] Result<FastxQueryReport>
     query_record_batch_aggregate(RecordBatchView batch, cuda::stream_ref stream) const {
-        normalize_record_batch_into<Config>(
+        CUSBF_TRY(normalize_record_batch_into<Config>(
             batch, normalized_sequence_scratch_, normalized_records_scratch_
-        );
+        ));
         return query_normalized_record_batch_aggregate(stream);
     }
 
@@ -792,7 +791,7 @@ class filter {
      * @param stream CUDA stream to use.
      * @return Aggregate query summary.
      */
-    [[nodiscard]] FastxQueryReport query_normalized_record_batch_aggregate(
+    [[nodiscard]] Result<FastxQueryReport> query_normalized_record_batch_aggregate(
         cuda::stream_ref stream
     ) const {
         FastxQueryReport report;
@@ -805,21 +804,21 @@ class filter {
             return report;
         }
 
-        const auto d_sequence = staged_sequence_view(
+        const auto d_sequence = CUSBF_TRY(staged_sequence_view(
             {normalized_sequence_scratch_.data(), normalized_sequence_scratch_.size()}, stream
-        );
+        ));
         const uint64_t num_kmers = sequence_kmer_count(d_sequence);
         ensure_result_capacity(num_kmers);
-        launch_contains_sequence(
+        CUSBF_TRY(launch_contains_sequence(
             d_sequence,
             device_span<uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), num_kmers},
             stream
-        );
+        ));
         report.positive_kmers = detail::count_positive_kmers_total<Config>(
             device_span<const uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), num_kmers},
             stream
         );
-        stream.sync();
+        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
         release_fastx_staging_scratch();
         return report;
     }
@@ -838,7 +837,7 @@ class filter {
      * @return Aggregate query summary for the batch.
      */
     template <typename Consumer>
-    [[nodiscard]] FastxQueryReport query_normalized_record_batch_with_hits(
+    [[nodiscard]] Result<FastxQueryReport> query_normalized_record_batch_with_hits(
         std::string_view input_sequence,
         Consumer&& consume,
         cuda::stream_ref stream
@@ -853,16 +852,16 @@ class filter {
             return report;
         }
 
-        const auto d_sequence = staged_sequence_view(
+        const auto d_sequence = CUSBF_TRY(staged_sequence_view(
             {normalized_sequence_scratch_.data(), normalized_sequence_scratch_.size()}, stream
-        );
+        ));
         const uint64_t num_kmers = sequence_kmer_count(d_sequence);
         ensure_result_capacity(num_kmers);
-        launch_contains_sequence(
+        CUSBF_TRY(launch_contains_sequence(
             d_sequence,
             device_span<uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), num_kmers},
             stream
-        );
+        ));
 
         const uint64_t record_count = normalized_records_scratch_.size();
         if (record_count > d_normalized_records_.size()) {
@@ -871,14 +870,14 @@ class filter {
         if (record_count > d_record_positive_kmers_.size()) {
             d_record_positive_kmers_.resize(record_count);
         }
-        CUSBF_CUDA_CALL(cudaMemcpyAsync(
+        CUSBF_CUDA_TRY(cudaMemcpyAsync(
             thrust::raw_pointer_cast(d_normalized_records_.data()),
             normalized_records_scratch_.data(),
             record_count * sizeof(NormalizedRecord),
             cudaMemcpyHostToDevice,
             stream.get()
         ));
-        detail::count_positive_kmers_per_record<Config>(
+        CUSBF_TRY(detail::count_positive_kmers_per_record<Config>(
             device_span<const uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), num_kmers},
             device_span<const NormalizedRecord>{
                 thrust::raw_pointer_cast(d_normalized_records_.data()), record_count
@@ -887,12 +886,12 @@ class filter {
                 thrust::raw_pointer_cast(d_record_positive_kmers_.data()), record_count
             },
             stream
-        );
+        ));
 
         if (record_count > record_positive_kmers_scratch_.size()) {
             record_positive_kmers_scratch_.resize(record_count);
         }
-        CUSBF_CUDA_CALL(cudaMemcpyAsync(
+        CUSBF_CUDA_TRY(cudaMemcpyAsync(
             record_positive_kmers_scratch_.data(),
             thrust::raw_pointer_cast(d_record_positive_kmers_.data()),
             record_count * sizeof(uint64_t),
@@ -901,14 +900,14 @@ class filter {
         ));
 
         result_hits_scratch_.resize(num_kmers);
-        CUSBF_CUDA_CALL(cudaMemcpyAsync(
+        CUSBF_CUDA_TRY(cudaMemcpyAsync(
             result_hits_scratch_.data(),
             thrust::raw_pointer_cast(d_resultBuffer_.data()),
             num_kmers * sizeof(uint8_t),
             cudaMemcpyDeviceToHost,
             stream.get()
         ));
-        stream.sync();
+        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
 
         for (const NormalizedRecord& record : normalized_records_scratch_) {
             const uint64_t kmers = record_kmer_count(record.size);
@@ -952,7 +951,7 @@ class filter {
     }
 
     /// @brief Internal implementation shared by insert_fastx() and insert_fastx_file().
-    [[nodiscard]] FastxInsertReport insert_fastx_stream(
+    [[nodiscard]] Result<FastxInsertReport> insert_fastx_stream(
         std::istream& input,
         std::string_view source_name,
         double fill_fraction,
@@ -965,7 +964,7 @@ class filter {
     }
 
     template <typename FastxReaderType>
-    [[nodiscard]] FastxInsertReport insert_fastx_reader(
+    [[nodiscard]] Result<FastxInsertReport> insert_fastx_reader(
         FastxReaderType& reader,
         std::string_view source_name,
         double fill_fraction,
@@ -976,8 +975,11 @@ class filter {
         FastxInsertReport report;
 
         const auto gpu_memory = detail::query_cuda_free_memory();
+        if (!gpu_memory) {
+            return cuda::std::unexpected(Error::resource(gpu_memory.error().message));
+        }
         const auto staging_budget_bytes =
-            detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory.free_bytes);
+            detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
         const auto host_chunk_max_bytes = detail::fastx_host_chunk_max_bytes();
         const uint64_t sequence_reserve_bytes = detail::fastx_uses_mmap_reader(dispatch_path)
                                                     ? detail::fastx_file_bytes(source_name)
@@ -985,13 +987,17 @@ class filter {
         FastxChunkAssembly chunk(sequence_reserve_bytes);
 
         if (detail::fastx_is_single_chunk_path(dispatch_path) && stream.get() == nullptr) {
-            while (collect_next_fastx_record(reader, record, chunk)) {}
+            for (;;) {
+                if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                    break;
+                }
+            }
             if (!chunk.empty()) {
                 accumulate_insert_report(
                     report,
-                    insert_record_batch(
+                    CUSBF_TRY(insert_record_batch(
                         make_batch_view(chunk.sequence_view(), chunk.ranges), stream
-                    )
+                    ))
                 );
             }
             release_fastx_staging_scratch();
@@ -1006,11 +1012,16 @@ class filter {
             size_t ping = 0;
             bool has_inflight = false;
 
-            auto flush = [&]() {
-                flush_chunk_insert_pipelined(chunk, report, chunk_streams, ping, has_inflight);
+            auto flush = [&]() -> Result<void> {
+                return flush_chunk_insert_pipelined(
+                    chunk, report, chunk_streams, ping, has_inflight
+                );
             };
 
-            while (collect_next_fastx_record(reader, record, chunk)) {
+            for (;;) {
+                if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                    break;
+                }
                 if (detail::fastx_chunk_should_flush<Config>(
                         detail::fastx_chunk_mode::insert,
                         pipelined_chunk_budget,
@@ -1018,29 +1029,35 @@ class filter {
                         chunk.raw_sequence_bytes(),
                         chunk.recordCount()
                     )) {
-                    flush();
+                    CUSBF_TRY(flush());
                 }
             }
 
-            flush();
-            chunk_streams.sync_all();
+            CUSBF_TRY(flush());
+            CUSBF_TRY(chunk_streams.sync_all());
             release_fastx_host_pings();
             release_fastx_device_staging();
             return report;
         }
 
-        auto flush = [&]() {
+        auto flush = [&]() -> Result<void> {
             if (chunk.empty()) {
-                return;
+                return {};
             }
             accumulate_insert_report(
                 report,
-                insert_record_batch(make_batch_view(chunk.sequence_view(), chunk.ranges), stream)
+                CUSBF_TRY(insert_record_batch(
+                    make_batch_view(chunk.sequence_view(), chunk.ranges), stream
+                ))
             );
             chunk.clear_and_shrink();
+            return {};
         };
 
-        while (collect_next_fastx_record(reader, record, chunk)) {
+        for (;;) {
+            if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                break;
+            }
             if (detail::fastx_chunk_should_flush<Config>(
                     detail::fastx_chunk_mode::insert,
                     staging_budget_bytes,
@@ -1048,17 +1065,17 @@ class filter {
                     chunk.raw_sequence_bytes(),
                     chunk.recordCount()
                 )) {
-                flush();
+                CUSBF_TRY(flush());
             }
         }
 
-        flush();
+        CUSBF_TRY(flush());
         release_fastx_staging_scratch();
         return report;
     }
 
     /// @brief Internal implementation shared by query_fastx() and query_fastx_file().
-    [[nodiscard]] FastxQueryReport query_fastx_stream(
+    [[nodiscard]] Result<FastxQueryReport> query_fastx_stream(
         std::istream& input,
         std::string_view source_name,
         double fill_fraction,
@@ -1071,7 +1088,7 @@ class filter {
     }
 
     template <typename FastxReaderType>
-    [[nodiscard]] FastxQueryReport query_fastx_reader(
+    [[nodiscard]] Result<FastxQueryReport> query_fastx_reader(
         FastxReaderType& reader,
         std::string_view source_name,
         double fill_fraction,
@@ -1082,8 +1099,11 @@ class filter {
         FastxQueryReport report;
 
         const auto gpu_memory = detail::query_cuda_free_memory();
+        if (!gpu_memory) {
+            return cuda::std::unexpected(Error::resource(gpu_memory.error().message));
+        }
         const auto staging_budget_bytes =
-            detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory.free_bytes);
+            detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
         const auto host_chunk_max_bytes = detail::fastx_host_chunk_max_bytes();
         const uint64_t sequence_reserve_bytes = detail::fastx_uses_mmap_reader(dispatch_path)
                                                     ? detail::fastx_file_bytes(source_name)
@@ -1091,13 +1111,17 @@ class filter {
         FastxChunkAssembly chunk(sequence_reserve_bytes);
 
         if (detail::fastx_is_single_chunk_path(dispatch_path) && stream.get() == nullptr) {
-            while (collect_next_fastx_record(reader, record, chunk)) {}
+            for (;;) {
+                if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                    break;
+                }
+            }
             if (!chunk.empty()) {
                 accumulate_query_report(
                     report,
-                    query_record_batch_aggregate(
+                    CUSBF_TRY(query_record_batch_aggregate(
                         make_batch_view(chunk.sequence_view(), chunk.ranges), stream
-                    )
+                    ))
                 );
             }
             release_fastx_staging_scratch();
@@ -1112,13 +1136,16 @@ class filter {
             size_t ping = 0;
             bool has_inflight = false;
 
-            auto flush = [&]() {
-                flush_chunk_query_aggregate_pipelined(
+            auto flush = [&]() -> Result<void> {
+                return flush_chunk_query_aggregate_pipelined(
                     chunk, report, chunk_streams, ping, has_inflight
                 );
             };
 
-            while (collect_next_fastx_record(reader, record, chunk)) {
+            for (;;) {
+                if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                    break;
+                }
                 if (detail::fastx_chunk_should_flush<Config>(
                         detail::fastx_chunk_mode::query,
                         pipelined_chunk_budget,
@@ -1126,31 +1153,35 @@ class filter {
                         chunk.raw_sequence_bytes(),
                         chunk.recordCount()
                     )) {
-                    flush();
+                    CUSBF_TRY(flush());
                 }
             }
 
-            flush();
-            chunk_streams.sync_all();
+            CUSBF_TRY(flush());
+            CUSBF_TRY(chunk_streams.sync_all());
             release_fastx_host_pings();
             release_fastx_device_staging();
             return report;
         }
 
-        auto flush = [&]() {
+        auto flush = [&]() -> Result<void> {
             if (chunk.empty()) {
-                return;
+                return {};
             }
             accumulate_query_report(
                 report,
-                query_record_batch_aggregate(
+                CUSBF_TRY(query_record_batch_aggregate(
                     make_batch_view(chunk.sequence_view(), chunk.ranges), stream
-                )
+                ))
             );
             chunk.clear_and_shrink();
+            return {};
         };
 
-        while (collect_next_fastx_record(reader, record, chunk)) {
+        for (;;) {
+            if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                break;
+            }
             if (detail::fastx_chunk_should_flush<Config>(
                     detail::fastx_chunk_mode::query,
                     staging_budget_bytes,
@@ -1158,11 +1189,11 @@ class filter {
                     chunk.raw_sequence_bytes(),
                     chunk.recordCount()
                 )) {
-                flush();
+                CUSBF_TRY(flush());
             }
         }
 
-        flush();
+        CUSBF_TRY(flush());
         release_fastx_staging_scratch();
         return report;
     }
@@ -1185,13 +1216,13 @@ class filter {
         }
     }
 
-    [[nodiscard]] device_span<const char>
+    [[nodiscard]] Result<device_span<const char>>
     stage_sequence_ping(size_t ping, std::string_view sequence, cuda::stream_ref stream) const {
         auto& buffer = d_sequence_pings_[ping & 1U];
         if (sequence.size() > buffer.size()) {
             buffer.resize(sequence.size());
         }
-        CUSBF_CUDA_CALL(cudaMemcpyAsync(
+        CUSBF_CUDA_TRY(cudaMemcpyAsync(
             thrust::raw_pointer_cast(buffer.data()),
             sequence.data(),
             sequence.size(),
@@ -1201,7 +1232,7 @@ class filter {
         return device_span<const char>{thrust::raw_pointer_cast(buffer.data()), sequence.size()};
     }
 
-    void flush_chunk_insert_pipelined(
+    Result<void> flush_chunk_insert_pipelined(
         FastxChunkAssembly& chunk,
         FastxInsertReport& report,
         detail::ChunkStreamPair& chunk_streams,
@@ -1209,36 +1240,37 @@ class filter {
         bool& has_inflight
     ) {
         if (chunk.empty()) {
-            return;
+            return {};
         }
 
         if (has_inflight) {
-            CUSBF_CUDA_CALL(cudaStreamSynchronize(chunk_streams[(ping - 1U) & 1U].get()));
+            CUSBF_CUDA_TRY(cudaStreamSynchronize(chunk_streams[(ping - 1U) & 1U].get()));
         }
 
         const size_t slot = ping & 1U;
         const cuda::stream_ref active_stream = chunk_streams[slot];
 
-        normalize_record_batch_into_pinned(
+        CUSBF_TRY(normalize_record_batch_into_pinned(
             make_batch_view(chunk.sequence_view(), chunk.ranges),
             normalized_sequence_pings_[slot],
             normalized_records_pings_[slot]
-        );
+        ));
         chunk.clear();
         accumulate_normalized_insert_report(report, slot);
 
         if (normalized_sequence_pings_[slot].size() == 0) {
-            return;
+            return {};
         }
 
         const auto d_sequence =
-            stage_sequence_ping(ping, normalized_sequence_pings_[slot].view(), active_stream);
-        launch_insert_sequence(d_sequence, active_stream);
+            CUSBF_TRY(stage_sequence_ping(ping, normalized_sequence_pings_[slot].view(), active_stream));
+        CUSBF_TRY(launch_insert_sequence(d_sequence, active_stream));
         has_inflight = true;
         ping += 1;
+        return {};
     }
 
-    void flush_chunk_query_aggregate_pipelined(
+    Result<void> flush_chunk_query_aggregate_pipelined(
         FastxChunkAssembly& chunk,
         FastxQueryReport& report,
         detail::ChunkStreamPair& chunk_streams,
@@ -1246,37 +1278,37 @@ class filter {
         bool& has_inflight
     ) const {
         if (chunk.empty()) {
-            return;
+            return {};
         }
 
         if (has_inflight) {
-            CUSBF_CUDA_CALL(cudaStreamSynchronize(chunk_streams[(ping - 1U) & 1U].get()));
+            CUSBF_CUDA_TRY(cudaStreamSynchronize(chunk_streams[(ping - 1U) & 1U].get()));
         }
 
         const size_t slot = ping & 1U;
         const cuda::stream_ref active_stream = chunk_streams[slot];
 
-        normalize_record_batch_into_pinned(
+        CUSBF_TRY(normalize_record_batch_into_pinned(
             make_batch_view(chunk.sequence_view(), chunk.ranges),
             normalized_sequence_pings_[slot],
             normalized_records_pings_[slot]
-        );
+        ));
         chunk.clear();
         accumulate_normalized_query_report(report, slot);
 
         if (normalized_sequence_pings_[slot].size() == 0) {
-            return;
+            return {};
         }
 
         const auto d_sequence =
-            stage_sequence_ping(ping, normalized_sequence_pings_[slot].view(), active_stream);
+            CUSBF_TRY(stage_sequence_ping(ping, normalized_sequence_pings_[slot].view(), active_stream));
         const uint64_t num_kmers = sequence_kmer_count(d_sequence);
         ensure_result_capacity(num_kmers);
-        launch_contains_sequence(
+        CUSBF_TRY(launch_contains_sequence(
             d_sequence,
             device_span<uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), num_kmers},
             active_stream
-        );
+        ));
         const uint64_t positive_kmers = detail::count_positive_kmers_total<Config>(
             device_span<const uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), num_kmers},
             active_stream
@@ -1284,10 +1316,11 @@ class filter {
         report.positive_kmers += positive_kmers;
         has_inflight = true;
         ping += 1;
+        return {};
     }
 
     template <typename FastxReaderType, typename Consumer>
-    [[nodiscard]] FastxQueryReport query_fastx_records_stream(
+    [[nodiscard]] Result<FastxQueryReport> query_fastx_records_stream(
         FastxReaderType& reader,
         [[maybe_unused]] std::string_view source_name,
         Consumer&& consume,
@@ -1299,17 +1332,20 @@ class filter {
         FastxQueryReport report;
 
         const auto gpu_memory = detail::query_cuda_free_memory();
+        if (!gpu_memory) {
+            return cuda::std::unexpected(Error::resource(gpu_memory.error().message));
+        }
         const auto staging_budget_bytes =
-            detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory.free_bytes);
+            detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
         const auto host_chunk_max_bytes = detail::fastx_host_chunk_max_bytes();
         FastxChunkAssembly chunk;
         std::vector<FastxRecordHeaderRef> record_headers;
         uint64_t record_indexBase = 0;
 
         if (detail::fastx_is_single_chunk_path(dispatch_path)) {
-            while (true) {
+            for (;;) {
                 const uint64_t local_index = chunk.recordCount();
-                if (!collect_next_fastx_record(reader, record, chunk)) {
+                if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
                     break;
                 }
                 record_headers.push_back(
@@ -1318,7 +1354,7 @@ class filter {
             }
 
             if (!chunk.empty()) {
-                const FastxQueryReport chunkReport = query_record_batch(
+                const FastxQueryReport chunkReport = CUSBF_TRY(query_record_batch(
                     make_batch_view(chunk.sequence_view(), chunk.ranges),
                     [&](const RecordQueryView& recordView) {
                         const FastxRecordHeaderRef& record_header =
@@ -1341,7 +1377,7 @@ class filter {
                         );
                     },
                     stream
-                );
+                ));
                 accumulate_query_report(report, chunkReport);
             }
 
@@ -1355,11 +1391,11 @@ class filter {
                                       )
                                     : staging_budget_bytes;
 
-        auto flush = [&]() {
+        auto flush = [&]() -> Result<void> {
             if (chunk.empty()) {
-                return;
+                return {};
             }
-            const FastxQueryReport chunkReport = query_record_batch(
+            const FastxQueryReport chunkReport = CUSBF_TRY(query_record_batch(
                 make_batch_view(chunk.sequence_view(), chunk.ranges),
                 [&](const RecordQueryView& recordView) {
                     const FastxRecordHeaderRef& record_header =
@@ -1382,17 +1418,18 @@ class filter {
                     );
                 },
                 stream
-            );
+            ));
             accumulate_query_report(report, chunkReport);
             record_indexBase += chunk.recordCount();
             chunk.clear_and_shrink();
             record_headers.clear();
             record_headers.shrink_to_fit();
+            return {};
         };
 
-        while (true) {
+        for (;;) {
             const uint64_t local_index = chunk.recordCount();
-            if (!collect_next_fastx_record(reader, record, chunk)) {
+            if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
                 break;
             }
             record_headers.push_back(FastxRecordHeaderRef{std::move(record.header), local_index});
@@ -1403,11 +1440,11 @@ class filter {
                     chunk.raw_sequence_bytes(),
                     chunk.recordCount()
                 )) {
-                flush();
+                CUSBF_TRY(flush());
             }
         }
 
-        flush();
+        CUSBF_TRY(flush());
         release_fastx_staging_scratch();
         return report;
     }
@@ -1415,7 +1452,7 @@ class filter {
     /// @brief Internal implementation shared by query_fastx_detailed() and
     /// query_fastx_file_detailed().
     template <typename FastxReaderType>
-    [[nodiscard]] FastxDetailedQueryReport query_fastx_detailed_stream(
+    [[nodiscard]] Result<FastxDetailedQueryReport> query_fastx_detailed_stream(
         FastxReaderType& reader,
         std::string_view source_name,
         double fill_fraction,
@@ -1423,7 +1460,7 @@ class filter {
         detail::fastx_dispatch_path dispatch_path
     ) const {
         FastxDetailedQueryReport report;
-        report.summary = query_fastx_records_stream(
+        report.summary = CUSBF_TRY(query_fastx_records_stream(
             reader,
             source_name,
             [&report](const FastxRecordView& record) {
@@ -1442,7 +1479,7 @@ class filter {
             fill_fraction,
             stream,
             dispatch_path
-        );
+        ));
         return report;
     }
 
@@ -1471,15 +1508,16 @@ class filter {
      * @param sequence Source span (host memory).
      * @param stream   CUDA stream.
      */
-    void stage_sequence(cuda::std::span<const char> sequence, cuda::stream_ref stream) const {
+    Result<void> stage_sequence(cuda::std::span<const char> sequence, cuda::stream_ref stream) const {
         ensure_sequence_capacity(sequence.size());
-        CUSBF_CUDA_CALL(cudaMemcpyAsync(
+        CUSBF_CUDA_TRY(cudaMemcpyAsync(
             thrust::raw_pointer_cast(d_sequence_.data()),
             sequence.data(),
             sequence.size_bytes(),
             cudaMemcpyHostToDevice,
             stream.get()
         ));
+        return {};
     }
 
     /// @brief Number of k-mer windows in a device-resident encoded sequence.
@@ -1492,9 +1530,9 @@ class filter {
      *
      * Grows @c d_sequence_ or ping-pong buffers as needed.
      */
-    [[nodiscard]] device_span<const char>
+    [[nodiscard]] Result<device_span<const char>>
     staged_sequence_view(cuda::std::span<const char> sequence, cuda::stream_ref stream) const {
-        stage_sequence(sequence, stream);
+        CUSBF_TRY(stage_sequence(sequence, stream));
         return device_span<const char>{
             thrust::raw_pointer_cast(d_sequence_.data()), sequence.size()
         };
@@ -1505,11 +1543,11 @@ class filter {
      * @param d_sequence Device-resident sequence.
      * @param stream     CUDA stream.
      */
-    void launch_insert_sequence(device_span<const char> d_sequence, cuda::stream_ref stream) {
+    Result<void> launch_insert_sequence(device_span<const char> d_sequence, cuda::stream_ref stream) {
         const auto input = detail::SequenceKmerInput<Config>{d_sequence};
         const uint64_t numKmers = input.kmerCount();
         if (numKmers == 0) {
-            return;
+            return {};
         }
         const uint64_t gridSize = cuda::ceil_div(numKmers, Config::cudaBlockSize);
 
@@ -1518,7 +1556,8 @@ class filter {
                 input,
                 device_span<block_type>{thrust::raw_pointer_cast(d_shards_.data()), num_shards_}
             );
-        CUSBF_CUDA_CALL(cudaGetLastError());
+        CUSBF_CUDA_TRY(cudaGetLastError());
+        return {};
     }
 
     /**
@@ -1527,7 +1566,7 @@ class filter {
      * @param d_output   Per-k-mer result buffer (one byte per k-mer).
      * @param stream     CUDA stream.
      */
-    void launch_contains_sequence(
+    Result<void> launch_contains_sequence(
         device_span<const char> d_sequence,
         device_span<uint8_t> d_output,
         cuda::stream_ref stream
@@ -1545,7 +1584,8 @@ class filter {
                 },
                 d_output
             );
-        CUSBF_CUDA_CALL(cudaGetLastError());
+        CUSBF_CUDA_TRY(cudaGetLastError());
+        return {};
     }
 };
 

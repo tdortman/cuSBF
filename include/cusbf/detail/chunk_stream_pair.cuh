@@ -6,6 +6,7 @@
 #include <array>
 #include <utility>
 
+#include <cusbf/error.hpp>
 #include <cusbf/helpers.cuh>
 
 namespace cusbf::detail {
@@ -15,7 +16,7 @@ class ChunkStreamPair {
    public:
     ChunkStreamPair() {
         for (cudaStream_t& stream : streams_) {
-            CUSBF_CUDA_CALL(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+            CUSBF_CUDA_ABORT(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
         }
     }
 
@@ -49,12 +50,13 @@ class ChunkStreamPair {
     }
 
     /// @brief Blocks until both streams complete.
-    void sync_all() const {
+    [[nodiscard]] Result<void> sync_all() const {
         for (cudaStream_t stream : streams_) {
             if (stream != nullptr) {
-                CUSBF_CUDA_CALL(cudaStreamSynchronize(stream));
+        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream));
             }
         }
+        return {};
     }
 
    private:
@@ -63,7 +65,7 @@ class ChunkStreamPair {
     void destroy() {
         for (cudaStream_t& stream : streams_) {
             if (stream != nullptr) {
-                CUSBF_CUDA_CALL(cudaStreamDestroy(stream));
+                CUSBF_CUDA_ABORT(cudaStreamDestroy(stream));
                 stream = nullptr;
             }
         }

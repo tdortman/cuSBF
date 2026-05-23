@@ -11,6 +11,7 @@
 
 #include <cusbf/config.cuh>
 #include <cusbf/device_span.cuh>
+#include <cusbf/error.hpp>
 #include <cusbf/helpers.cuh>
 #include <cusbf/normalized_record_batch.hpp>
 
@@ -68,17 +69,19 @@ count_positive_kmers_total(device_span<const uint8_t> hits, cuda::stream_ref str
  * @p positive_kmers_out must hold at least @p records.size() elements.
  */
 template <typename Config>
-inline void count_positive_kmers_per_record(
+[[nodiscard]] inline Result<void> count_positive_kmers_per_record(
     device_span<const uint8_t> hits,
     device_span<const NormalizedRecord> records,
     device_span<uint64_t> positive_kmers_out,
     cuda::stream_ref stream
 ) {
     if (records.empty()) {
-        return;
+        return {};
     }
     if (positive_kmers_out.size() < records.size()) {
-        throw std::invalid_argument("positive k-mer output buffer is too small");
+        return cuda::std::unexpected(
+            Error::invalid_argument("positive k-mer output buffer is too small")
+        );
     }
 
     const uint32_t block_size = 256;
@@ -86,7 +89,8 @@ inline void count_positive_kmers_per_record(
     count_positive_kmers_per_record_kernel<Config><<<grid_size, block_size, 0, stream.get()>>>(
         hits.data(), records.data(), positive_kmers_out.data(), records.size()
     );
-    CUSBF_CUDA_CALL(cudaGetLastError());
+        CUSBF_CUDA_TRY(cudaGetLastError());
+    return {};
 }
 
 }  // namespace cusbf::detail

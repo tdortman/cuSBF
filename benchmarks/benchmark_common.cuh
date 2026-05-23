@@ -138,14 +138,18 @@ class CPUTimer {
 // Concatenate all records in a FASTA/FASTQ file into a single sequence,
 // inserting @p separator between records.
 inline std::vector<char> readFastxConcatenated(std::string_view path, char separator = 'N') {
-    auto input = cusbf::detail::openFastxFile(path);
+    const std::filesystem::path file_path{path};
+    auto input = CUSBF_UNWRAP(cusbf::detail::openFastxFile(file_path));
     cusbf::detail::FastxReader reader(*input, path);
     cusbf::detail::FastxRecord record;
 
     std::vector<char> sequence;
     bool firstRecord = true;
 
-    while (reader.nextRecord(record)) {
+    while (true) {
+        if (!CUSBF_UNWRAP(reader.nextRecord(record))) {
+            break;
+        }
         if (!firstRecord) {
             sequence.push_back(separator);
         }
@@ -429,7 +433,7 @@ class CuSbfConfigFixture : public CuSbfFixtureBase<Config> {
 template <typename Fixture>
 void runCuSbfInsert(Fixture& fixture, benchmark::State& state) {
     for (auto _ : state) {
-        fixture.filter->clear();
+        CUSBF_UNWRAP(fixture.filter->clear());
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
         fixture.timer.start();
@@ -447,7 +451,7 @@ void runCuSbfInsert(Fixture& fixture, benchmark::State& state) {
 
 template <typename Fixture>
 void runCuSbfQuery(Fixture& fixture, benchmark::State& state) {
-    fixture.filter->clear();
+    CUSBF_UNWRAP(fixture.filter->clear());
     benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(fixture.benchData->d_throughputSequence.data()),
@@ -458,7 +462,7 @@ void runCuSbfQuery(Fixture& fixture, benchmark::State& state) {
 
     for (auto _ : state) {
         fixture.timer.start();
-        fixture.filter->contains_sequence_async(
+        cusbf::require_void(fixture.filter->contains_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(fixture.benchData->d_throughputSequence.data()),
                 fixture.sequenceLength
@@ -466,7 +470,7 @@ void runCuSbfQuery(Fixture& fixture, benchmark::State& state) {
             cusbf::device_span<uint8_t>{
                 thrust::raw_pointer_cast(fixture.d_output.data()), fixture.d_output.size()
             }
-        );
+        ));
         const double elapsed = fixture.timer.elapsed();
         state.SetIterationTime(elapsed);
         benchmark::DoNotOptimize(thrust::raw_pointer_cast(fixture.d_output.data()));
@@ -478,7 +482,7 @@ template <typename Fixture>
 void runCuSbfFpr(Fixture& fixture, benchmark::State& state) {
     fixture.benchData->ensureFprData();
 
-    fixture.filter->clear();
+    CUSBF_UNWRAP(fixture.filter->clear());
     benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(fixture.benchData->d_fprInsertSequence.data()),
@@ -490,7 +494,7 @@ void runCuSbfFpr(Fixture& fixture, benchmark::State& state) {
     uint64_t falsePositives = 0;
     for (auto _ : state) {
         fixture.timer.start();
-        fixture.filter->contains_sequence_async(
+        cusbf::require_void(fixture.filter->contains_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(fixture.benchData->d_zeroOverlapSequence.data()),
                 fixture.sequenceLength
@@ -498,7 +502,7 @@ void runCuSbfFpr(Fixture& fixture, benchmark::State& state) {
             cusbf::device_span<uint8_t>{
                 thrust::raw_pointer_cast(fixture.d_output.data()), fixture.d_output.size()
             }
-        );
+        ));
         const double elapsed = fixture.timer.elapsed();
         state.SetIterationTime(elapsed);
         benchmark::DoNotOptimize(thrust::raw_pointer_cast(fixture.d_output.data()));

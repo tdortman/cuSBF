@@ -72,7 +72,7 @@ class FastxPinnedSequenceBuffer {
     /// @brief Frees pinned host memory and resets size and capacity.
     void release() {
         if (data_ != nullptr) {
-            CUSBF_CUDA_CALL(cudaFreeHost(data_));
+            CUSBF_CUDA_ABORT(cudaFreeHost(data_));
             data_ = nullptr;
         }
         size_ = 0;
@@ -80,29 +80,31 @@ class FastxPinnedSequenceBuffer {
     }
 
     /// @brief Grows pinned allocation to at least @p nbytes, preserving existing bytes.
-    void reserve(size_t nbytes) {
+    [[nodiscard]] Result<void> reserve(size_t nbytes) {
         if (nbytes <= capacity_) {
-            return;
+            return {};
         }
 
         char* reallocated = nullptr;
-        CUSBF_CUDA_CALL(cudaHostAlloc(&reallocated, nbytes, cudaHostAllocDefault));
+        CUSBF_CUDA_TRY(cudaHostAlloc(&reallocated, nbytes, cudaHostAllocDefault));
         if (data_ != nullptr) {
             if (size_ != 0) {
                 std::memcpy(reallocated, data_, size_);
             }
-            CUSBF_CUDA_CALL(cudaFreeHost(data_));
+            CUSBF_CUDA_ABORT(cudaFreeHost(data_));
         }
         data_ = reallocated;
         capacity_ = nbytes;
+        return {};
     }
 
     /// @brief Sets logical size to @p nbytes, reserving if needed.
-    void set_size(size_t nbytes) {
+    [[nodiscard]] Result<void> set_size(size_t nbytes) {
         if (nbytes > capacity_) {
-            reserve(nbytes);
+            CUSBF_TRY(reserve(nbytes));
         }
         size_ = nbytes;
+        return {};
     }
 
    private:

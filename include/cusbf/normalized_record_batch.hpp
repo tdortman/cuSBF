@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <cusbf/config.cuh>
+#include <cusbf/error.hpp>
 #include <cusbf/Fastx.hpp>
 
 namespace cusbf {
@@ -57,7 +58,14 @@ class NormalizedRecordBatch {
 
    private:
     template <typename Config>
-    friend NormalizedRecordBatch normalize_record_batch(RecordBatchView batch);
+    friend Result<NormalizedRecordBatch> normalize_record_batch(RecordBatchView batch);
+
+    template <typename Config>
+    [[nodiscard]] static Result<NormalizedRecordBatch> from_batch(RecordBatchView batch) {
+        NormalizedRecordBatch prepared;
+        CUSBF_TRY(normalize_record_batch_into<Config>(batch, prepared.sequence_, prepared.records_));
+        return prepared;
+    }
 
     std::string sequence_;
     std::vector<NormalizedRecord> records_;
@@ -123,24 +131,31 @@ static void appendRecordBoundary(std::string& sequence) {
 }
 
 template <typename Config>
-static void validateRecordBatch(RecordBatchView batch) {
+[[nodiscard]] static Result<void> validateRecordBatch(RecordBatchView batch) {
     uint64_t next_offset = 0;
     for (const RecordRange& record : batch.records) {
         if (record.sequenceOffset < next_offset) {
-            throw std::invalid_argument("record batch ranges must be ordered and non-overlapping");
+            return cuda::std::unexpected(
+                Error::invalid_argument("record batch ranges must be ordered and non-overlapping")
+            );
         }
         if (record.sequenceOffset > batch.sequence.size() ||
             record.sequenceBytes > batch.sequence.size() - record.sequenceOffset) {
-            throw std::invalid_argument("record batch range exceeds the source sequence");
+            return cuda::std::unexpected(
+                Error::invalid_argument("record batch range exceeds the source sequence")
+            );
         }
         if (record.sequenceOffset % Config::symbolWidth != 0 ||
             record.sequenceBytes % Config::symbolWidth != 0) {
-            throw std::invalid_argument(
-                "record batch ranges must align to the configured alphabet symbol width"
+            return cuda::std::unexpected(
+                Error::invalid_argument(
+                    "record batch ranges must align to the configured alphabet symbol width"
+                )
             );
         }
         next_offset = record.sequenceOffset + record.sequenceBytes;
     }
+    return {};
 }
 
 template <typename Config>
@@ -237,8 +252,6 @@ inline void normalize_record_batch_into_buffer(
     size_t& sequence_out_bytes,
     std::vector<NormalizedRecord>& records_out
 ) {
-    validateRecordBatch<Config>(batch);
-
     records_out.clear();
     if (batch.records.size() <= 4096) {
         records_out.reserve(batch.records.size());
@@ -289,12 +302,12 @@ inline void normalize_record_batch_into_buffer(
  * @param records_out   Output per-record metadata (cleared then filled).
  */
 template <typename Config>
-void normalize_record_batch_into(
+[[nodiscard]] Result<void> normalize_record_batch_into(
     RecordBatchView batch,
     std::string& sequence_out,
     std::vector<NormalizedRecord>& records_out
 ) {
-    detail::validateRecordBatch<Config>(batch);
+    CUSBF_TRY(detail::validateRecordBatch<Config>(batch));
 
     const uint64_t estimated_bytes = detail::estimate_normalized_batch_bytes<Config>(batch);
     sequence_out.resize(static_cast<size_t>(estimated_bytes));
@@ -303,6 +316,7 @@ void normalize_record_batch_into(
         batch, sequence_out.data(), sequence_out_bytes, records_out
     );
     sequence_out.resize(sequence_out_bytes);
+    return {};
 }
 
 /**
@@ -313,10 +327,8 @@ void normalize_record_batch_into(
  * @return Owning normalized batch ready for @ref filter::insert_record_batch or query APIs.
  */
 template <typename Config>
-[[nodiscard]] NormalizedRecordBatch normalize_record_batch(RecordBatchView batch) {
-    NormalizedRecordBatch prepared;
-    normalize_record_batch_into<Config>(batch, prepared.sequence_, prepared.records_);
-    return prepared;
+[[nodiscard]] Result<NormalizedRecordBatch> normalize_record_batch(RecordBatchView batch) {
+    return NormalizedRecordBatch::from_batch<Config>(batch);
 }
 
 }  // namespace cusbf

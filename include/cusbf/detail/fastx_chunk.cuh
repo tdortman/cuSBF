@@ -4,12 +4,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <format>
 #include <stdexcept>
-#include <string>
 #include <string_view>
 
 #include <cusbf/config.cuh>
 #include <cusbf/detail/fastx_host_limits.cuh>
+#include <cusbf/error.hpp>
 
 #if defined(__linux__)
     #include <sys/stat.h>
@@ -27,13 +29,13 @@ struct cuda_free_memory {
 };
 
 /// @brief Queries current device free memory via @c cudaMemGetInfo.
-[[nodiscard]] inline cuda_free_memory query_cuda_free_memory() {
+[[nodiscard]] inline Result<cuda_free_memory> query_cuda_free_memory() {
     size_t free_bytes = 0;
     size_t total_bytes = 0;
     const cudaError_t error = cudaMemGetInfo(&free_bytes, &total_bytes);
     if (error != cudaSuccess) {
-        throw std::runtime_error(
-            std::string{"cudaMemGetInfo failed: "} + cudaGetErrorString(error)
+        return cuda::std::unexpected(
+            Error::io(std::format("cudaMemGetInfo failed: {}", cudaGetErrorString(error)))
         );
     }
     return cuda_free_memory{free_bytes};
@@ -44,9 +46,9 @@ struct cuda_free_memory {
     return 64u << 20;
 }
 
-[[nodiscard]] inline uint64_t fastx_file_bytes(std::string_view path) {
+[[nodiscard]] inline uint64_t fastx_file_bytes(const std::filesystem::path& path) {
 #if defined(__linux__)
-    const std::string path_string(path);
+    const std::string path_string = path.string();
     struct stat file_status{};
     if (::stat(path_string.c_str(), &file_status) != 0 || file_status.st_size < 0) {
         return 0;
@@ -155,22 +157,28 @@ template <typename Config>
 
 /// @brief Whether the entire uncompressed file fits in one GPU staging pass.
 template <typename Config>
-[[nodiscard]] inline bool
-fastx_file_fits_gpu_staging(std::string_view path, fastx_chunk_mode mode, double fill_fraction) {
+[[nodiscard]] inline bool fastx_file_fits_gpu_staging(
+    const std::filesystem::path& path,
+    fastx_chunk_mode mode,
+    double fill_fraction
+) {
     const uint64_t file_bytes = fastx_file_bytes(path);
     if (file_bytes == 0) {
         return true;
     }
 
     const auto gpu_memory = query_cuda_free_memory();
+    if (!gpu_memory) {
+        return false;
+    }
     const size_t staging_budget_bytes =
-        fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory.free_bytes);
+        fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
     return !fastx_chunk_reached_staging_budget<Config>(mode, staging_budget_bytes, file_bytes, 1);
 }
 
-/// @throws std::runtime_error if @p raw_bytes / @p record_count exceed the GPU staging budget.
+/// @return Resource error if @p raw_bytes / @p record_count exceed the GPU staging budget.
 template <typename Config>
-inline void validate_fastx_staging_fits(
+[[nodiscard]] inline Result<void> validate_fastx_staging_fits(
     fastx_chunk_mode mode,
     double fill_fraction,
     uint64_t raw_bytes,
@@ -178,19 +186,27 @@ inline void validate_fastx_staging_fits(
     std::string_view source_name
 ) {
     const auto gpu_memory = query_cuda_free_memory();
+    if (!gpu_memory) {
+        return cuda::std::unexpected(gpu_memory.error());
+    }
     const size_t staging_budget_bytes =
-        fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory.free_bytes);
+        fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
     if (!fastx_chunk_reached_staging_budget<Config>(
             mode, staging_budget_bytes, raw_bytes, record_count
         )) {
-        return;
+        return {};
     }
 
-    throw std::runtime_error(
-        std::string(source_name) +
-        ": FASTX input requires more GPU memory than available at fill_fraction=" +
-        std::to_string(fill_fraction) + " (free staging budget " +
-        std::to_string(staging_budget_bytes) + " bytes)"
+    return cuda::std::unexpected(
+        Error::resource(
+            std::format(
+                "{}: FASTX input requires more GPU memory than available at fill_fraction={} "
+                "(free staging budget {} bytes)",
+                source_name,
+                fill_fraction,
+                staging_budget_bytes
+            )
+        )
     );
 }
 

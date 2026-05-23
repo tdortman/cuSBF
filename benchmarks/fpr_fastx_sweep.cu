@@ -349,7 +349,7 @@ class SuperBloomCpuFprFastxFixture : public bm::Fixture {
 
 template <typename Fixture>
 void runCuSbfFprFastxBenchmark(Fixture& fixture, bm::State& state) {
-    fixture.filter->clear();
+    (void)fixture.filter->clear();
     benchmark::DoNotOptimize(fixture.filter->insert_sequence_async(
         cusbf::device_span<const char>{
             thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
@@ -360,7 +360,7 @@ void runCuSbfFprFastxBenchmark(Fixture& fixture, bm::State& state) {
 
     for (auto _ : state) {
         fixture.timer.start();
-        fixture.filter->contains_sequence_async(
+        cusbf::require_void(fixture.filter->contains_sequence_async(
             cusbf::device_span<const char>{
                 thrust::raw_pointer_cast(g_fastxData->d_querySequence.data()),
                 g_fastxData->d_querySequence.size()
@@ -368,7 +368,7 @@ void runCuSbfFprFastxBenchmark(Fixture& fixture, bm::State& state) {
             cusbf::device_span<uint8_t>{
                 thrust::raw_pointer_cast(fixture.d_output.data()), fixture.d_output.size()
             }
-        );
+        ));
         const double elapsed = fixture.timer.elapsed();
         state.SetIterationTime(elapsed);
         benchmark::DoNotOptimize(thrust::raw_pointer_cast(fixture.d_output.data()));
@@ -389,7 +389,7 @@ void runCuSbfFprFastxBenchmark(Fixture& fixture, bm::State& state) {
 }
 
 void runCucoFprFastxBenchmark(CucoBloomFprFastxFixture& fixture, bm::State& state) {
-    fixture.filter->clear();
+    (void)fixture.filter->clear();
     fixture.filter->add(
         g_fastxData->d_insertPackedKmers.begin(), g_fastxData->d_insertPackedKmers.end()
     );

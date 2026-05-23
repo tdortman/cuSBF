@@ -14,6 +14,7 @@
 
 #include <unistd.h>
 
+#include <cusbf/error.hpp>
 #include <cusbf/filter.cuh>
 
 using TestConfig = cusbf::Config<5, 4, 3, 4>;

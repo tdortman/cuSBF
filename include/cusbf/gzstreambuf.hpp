@@ -2,32 +2,41 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
+#include <filesystem>
+#include <format>
 #include <istream>
 #include <memory>
-#include <stdexcept>
 #include <streambuf>
-#include <string>
 #include <string_view>
 
 #include <zlib.h>
+#include <cusbf/error.hpp>
 
 namespace cusbf::detail {
 
 /// @brief @c std::streambuf over a gzip file (zlib @c gzread).
 class GzStreambuf : public std::streambuf {
    public:
+    GzStreambuf(const GzStreambuf&) = delete;
+    GzStreambuf& operator=(const GzStreambuf&) = delete;
+    GzStreambuf(GzStreambuf&&) = delete;
+    GzStreambuf& operator=(GzStreambuf&&) = delete;
+
     /**
      * @brief Opens @p path for binary gzip read.
      *
      * @param path Filesystem path to a @c .gz file.
-     * @throws std::runtime_error if zlib cannot open the file.
      */
-    explicit GzStreambuf(std::string_view path) : file_(gzopen(std::string(path).c_str(), "rb")) {
-        if (!file_) {
-            throw std::runtime_error("Failed to open gzip file: " + std::string(path));
+    [[nodiscard]] static Result<std::unique_ptr<GzStreambuf>> open(
+        const std::filesystem::path& path
+    ) {
+        auto streambuf = std::unique_ptr<GzStreambuf>(new GzStreambuf(path));
+        if (!streambuf->file_) {
+            return cuda::std::unexpected(
+                Error::io(std::format("Failed to open gzip file: {}", path.string()))
+            );
         }
-        setg(buffer_, buffer_, buffer_);
+        return streambuf;
     }
 
     ~GzStreambuf() override {
@@ -35,11 +44,6 @@ class GzStreambuf : public std::streambuf {
             gzclose(file_);
         }
     }
-
-    GzStreambuf(const GzStreambuf&) = delete;
-    GzStreambuf& operator=(const GzStreambuf&) = delete;
-    GzStreambuf(GzStreambuf&&) = delete;
-    GzStreambuf& operator=(GzStreambuf&&) = delete;
 
    protected:
     int_type underflow() override {
@@ -58,6 +62,12 @@ class GzStreambuf : public std::streambuf {
 
    private:
     static constexpr std::size_t kBufferSize = 8192;
+
+    explicit GzStreambuf(const std::filesystem::path& path)
+        : file_(gzopen(path.string().c_str(), "rb")) {
+        setg(buffer_, buffer_, buffer_);
+    }
+
     gzFile file_;
     char buffer_[kBufferSize];
 };
@@ -70,18 +80,28 @@ class GzIstream : public std::istream {
      *
      * @param path Filesystem path to a @c .gz file.
      */
-    explicit GzIstream(std::string_view path)
-        : std::istream(nullptr), sb_(std::make_unique<GzStreambuf>(path)) {
-        rdbuf(sb_.get());
+    [[nodiscard]] static Result<std::unique_ptr<GzIstream>> open(
+        const std::filesystem::path& path
+    ) {
+        auto streambuf = GzStreambuf::open(path);
+        if (!streambuf) {
+            return cuda::std::unexpected(streambuf.error());
+        }
+        return std::unique_ptr<GzIstream>(new GzIstream(std::move(*streambuf)));
     }
 
    private:
+    explicit GzIstream(std::unique_ptr<GzStreambuf> streambuf)
+        : std::istream(nullptr), sb_(std::move(streambuf)) {
+        rdbuf(sb_.get());
+    }
+
     std::unique_ptr<GzStreambuf> sb_;
 };
 
 /// @brief True when @p path begins with the gzip magic bytes (@c 0x1F, @c 0x8B).
-inline bool isGzipFile(std::string_view path) {
-    FILE* f = std::fopen(std::string(path).c_str(), "rb");
+inline bool isGzipFile(const std::filesystem::path& path) {
+    FILE* f = std::fopen(path.string().c_str(), "rb");
     if (!f) {
         return false;
     }

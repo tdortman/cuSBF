@@ -12,6 +12,7 @@
 #include <cusbf/filter.cuh>
 
 #include "large_fastx_util.hpp"
+#include "test_support.cuh"
 
 using LargeTestConfig = cusbf::Config<31, 28, 16, 4>;
 
@@ -188,7 +189,7 @@ TEST(LargeFastxOutOfCore, ProcessesGeneratedFastaAtConfiguredSize) {
     SCOPED_TRACE("Insert large FASTA");
     cusbf::filter<LargeTestConfig> filter(1u << 24);
     const auto insert_begin = std::chrono::steady_clock::now();
-    const auto insert_report = filter.insert_fastx_file(input.path, fill_fraction);
+    const auto insert_report = CUSBF_UNWRAP(filter.insert_fastx_file(input.path, fill_fraction));
     maybe_log_duration("insert", std::chrono::steady_clock::now() - insert_begin);
     EXPECT_EQ(insert_report.recordsIndexed, input.stats.records);
     EXPECT_EQ(insert_report.indexedBases, input.stats.indexed_bases);
@@ -196,7 +197,7 @@ TEST(LargeFastxOutOfCore, ProcessesGeneratedFastaAtConfiguredSize) {
 
     SCOPED_TRACE("Query large FASTA");
     const auto query_begin = std::chrono::steady_clock::now();
-    const auto query_report = filter.query_fastx_file(input.path, fill_fraction);
+    const auto query_report = CUSBF_UNWRAP(filter.query_fastx_file(input.path, fill_fraction));
     maybe_log_duration("query", std::chrono::steady_clock::now() - query_begin);
     EXPECT_EQ(query_report.recordsQueried, input.stats.records);
     EXPECT_EQ(query_report.queriedBases, input.stats.indexed_bases);
