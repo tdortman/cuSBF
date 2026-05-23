@@ -89,7 +89,7 @@ template <typename Config>
     count_positive_kmers_per_record_kernel<Config><<<grid_size, block_size, 0, stream.get()>>>(
         hits.data(), records.data(), positive_kmers_out.data(), records.size()
     );
-        CUSBF_CUDA_TRY(cudaGetLastError());
+    CUSBF_CUDA_TRY(cudaGetLastError());
     return {};
 }
 

@@ -240,7 +240,7 @@ int main(int argc, char** argv) {
                                             );
 
     if (!result) {
-        std::cerr << result.error().message << '\n';
+        std::cerr << result.error().message() << '\n';
         return 1;
     }
     return *result;

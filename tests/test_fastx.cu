@@ -79,9 +79,8 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsParsesWrappedFastqWithCrLf) {
     );
 
     std::vector<StreamedRecord> records;
-    const auto summary = CUSBF_UNWRAP(filter.query_fastx_file_records(
-        file.path,
-        [&](const cusbf::FastxRecordView& record) {
+    const auto summary = CUSBF_UNWRAP(
+        filter.query_fastx_file_records(file.path, [&](const cusbf::FastxRecordView& record) {
             records.push_back(
                 StreamedRecord{
                     record.record_index,
@@ -93,7 +92,8 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsParsesWrappedFastqWithCrLf) {
                     std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
                 }
             );
-        }));
+        })
+    );
 
     ASSERT_EQ(records.size(), 1u);
     const auto& record = records.front();
@@ -157,9 +157,8 @@ TEST_F(BloomFilterTest, RecordBatchInsertAndQueryInjectRecordBoundaries) {
     const auto insertReport = CUSBF_UNWRAP(filter.insert_record_batch(batch));
 
     std::vector<StreamedRecord> records;
-    const auto summary = CUSBF_UNWRAP(filter.query_record_batch(
-        batch,
-        [&](const cusbf::RecordQueryView& record) {
+    const auto summary =
+        CUSBF_UNWRAP(filter.query_record_batch(batch, [&](const cusbf::RecordQueryView& record) {
             records.push_back(
                 StreamedRecord{
                     record.record_index,
@@ -231,9 +230,8 @@ TEST_F(BloomFilterTest, TripletQueryFastxFileRecordsDoesNotCreateCrossRecordKmer
     );
 
     std::vector<StreamedRecord> records;
-    const auto summary = CUSBF_UNWRAP(filter.query_fastx_file_records(
-        file.path,
-        [&](const cusbf::FastxRecordView& record) {
+    const auto summary = CUSBF_UNWRAP(
+        filter.query_fastx_file_records(file.path, [&](const cusbf::FastxRecordView& record) {
             records.push_back(
                 StreamedRecord{
                     record.record_index,
@@ -245,7 +243,8 @@ TEST_F(BloomFilterTest, TripletQueryFastxFileRecordsDoesNotCreateCrossRecordKmer
                     std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
                 }
             );
-        }));
+        })
+    );
 
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(summary.recordsQueried, 2);
@@ -376,9 +375,8 @@ TEST_F(BloomFilterTest, QueryFastxRecordsPreservesWrappedFastaRecordOrder) {
     );
 
     std::vector<StreamedRecord> records;
-    const auto summary = CUSBF_UNWRAP(filter.query_fastx_records(
-        input,
-        [&](const cusbf::FastxRecordView& record) {
+    const auto summary =
+        CUSBF_UNWRAP(filter.query_fastx_records(input, [&](const cusbf::FastxRecordView& record) {
             records.push_back(
                 StreamedRecord{
                     record.record_index,
@@ -503,9 +501,8 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsReportInvalidWindowsAsMisses) {
     (void)CUSBF_UNWRAP(filter.insert_fastx_file(file.path));
 
     std::vector<StreamedRecord> records;
-    const auto summary = CUSBF_UNWRAP(filter.query_fastx_file_records(
-        file.path,
-        [&](const cusbf::FastxRecordView& record) {
+    const auto summary = CUSBF_UNWRAP(
+        filter.query_fastx_file_records(file.path, [&](const cusbf::FastxRecordView& record) {
             records.push_back(
                 StreamedRecord{
                     record.record_index,
@@ -517,7 +514,8 @@ TEST_F(BloomFilterTest, QueryFastxFileRecordsReportInvalidWindowsAsMisses) {
                     std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
                 }
             );
-        }));
+        })
+    );
 
     ASSERT_EQ(records.size(), 1u);
     const auto& record = records.front();
@@ -678,5 +676,10 @@ TEST_F(BloomFilterTest, MalformedFastqThrowsOnQualityLengthMismatch) {
 
     const auto query_result = filter.query_fastx_file(file.path);
     ASSERT_FALSE(query_result);
-    EXPECT_EQ(query_result.error().category, cusbf::ErrorCategory::fastx_parse);
+    EXPECT_EQ(query_result.error().category(), cusbf::ErrorCategory::fastx_parse);
+    const cusbf::FastxParseError* parse_error = query_result.error().as_fastx_parse();
+    ASSERT_NE(parse_error, nullptr);
+    const cusbf::SourceLocation& site = parse_error->location;
+    EXPECT_EQ(site.line, 4u);
+    EXPECT_EQ(site.column, 8u);
 }

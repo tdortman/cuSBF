@@ -63,7 +63,9 @@ class NormalizedRecordBatch {
     template <typename Config>
     [[nodiscard]] static Result<NormalizedRecordBatch> from_batch(RecordBatchView batch) {
         NormalizedRecordBatch prepared;
-        CUSBF_TRY(normalize_record_batch_into<Config>(batch, prepared.sequence_, prepared.records_));
+        CUSBF_TRY(
+            normalize_record_batch_into<Config>(batch, prepared.sequence_, prepared.records_)
+        );
         return prepared;
     }
 

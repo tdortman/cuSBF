@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <concepts>
 #include <cstdint>
 #include <filesystem>
@@ -167,6 +168,30 @@ inline void trimTrailingCarriageReturn(std::string& line) {
     }
 }
 
+/// @brief 1-based column at @p byte_index within @p line (clamped to the line end).
+[[nodiscard]] inline uint32_t fastx_column_at(std::string_view line, size_t byte_index) {
+    if (line.empty()) {
+        return 1;
+    }
+    return static_cast<uint32_t>(std::min(byte_index, line.size() - 1) + 1);
+}
+
+/// @brief 1-based column of the first quality byte that exceeds @p expected_length.
+[[nodiscard]] inline uint32_t fastx_quality_excess_column(
+    uint64_t quality_length,
+    uint64_t expected_length,
+    std::string_view line
+) {
+    const uint64_t before = quality_length - line.size();
+    const size_t byte_index = expected_length > before ? expected_length - before : line.size();
+    return fastx_column_at(line, byte_index);
+}
+
+/// @brief 1-based column where a quality run ends too short (position after the last byte).
+[[nodiscard]] inline uint32_t fastx_quality_short_column(std::string_view line) {
+    return static_cast<uint32_t>(line.empty() ? 1 : line.size() + 1);
+}
+
 /**
  * @brief Streaming FASTA/FASTQ parser.
  *
@@ -211,15 +236,17 @@ class FastxReader {
             } else if (headerTag == '@') {
                 format_ = FastxFormat::fastq;
             } else {
-                return cuda::std::unexpected(parseError("expected FASTA or FASTQ header"));
+                return cuda::std::unexpected(
+                    parseError("expected FASTA or FASTQ header", fastx_column_at(*header, 0))
+                );
             }
         }
 
         const char expectedHeader = format_ == FastxFormat::fasta ? '>' : '@';
         if (headerTag != expectedHeader) {
-            return cuda::std::unexpected(
-                parseError("mixed FASTA and FASTQ records are not supported")
-            );
+            return cuda::std::unexpected(parseError(
+                "mixed FASTA and FASTQ records are not supported", fastx_column_at(*header, 0)
+            ));
         }
 
         record.header.assign(header->substr(1));
@@ -239,8 +266,10 @@ class FastxReader {
     FastxFormat format_{FastxFormat::unknown};
     uint64_t lineNumber_{};
 
-    [[nodiscard]] Error parseError(std::string_view message) const {
-        return Error::fastx_parse(source_name_, lineNumber_, message);
+    [[nodiscard]] Error parseError(std::string_view message, uint32_t column) const {
+        return Error::fastx_parse(
+            SourceLocation::fastx(source_name_, static_cast<uint32_t>(lineNumber_), column), message
+        );
     }
 
     [[nodiscard]] Result<std::string_view> readHeaderLine() {
@@ -301,21 +330,25 @@ class FastxReader {
                 Error::io(std::format("Failed to read FASTA/FASTQ input from {}", source_name_))
             );
         }
-        return cuda::std::unexpected(
-            parseError("unterminated FASTQ record: missing '+' separator")
-        );
+        return cuda::std::unexpected(parseError(
+            "unterminated FASTQ record: missing '+' separator",
+            fastx_column_at(lineBuffer_, lineBuffer_.size() > 0 ? lineBuffer_.size() - 1 : 0)
+        ));
     }
 
     [[nodiscard]] Result<void> readFastqQualities(uint64_t expectedLength) {
         uint64_t qualityLength = 0;
+        uint32_t short_column = 1;
         while (qualityLength < expectedLength && std::getline(input_, lineBuffer_)) {
             ++lineNumber_;
             trimTrailingCarriageReturn(lineBuffer_);
+            short_column = fastx_quality_short_column(lineBuffer_);
             qualityLength += lineBuffer_.size();
             if (qualityLength > expectedLength) {
-                return cuda::std::unexpected(
-                    parseError("FASTQ quality length exceeds sequence length")
-                );
+                return cuda::std::unexpected(parseError(
+                    "FASTQ quality length exceeds sequence length",
+                    fastx_quality_excess_column(qualityLength, expectedLength, lineBuffer_)
+                ));
             }
         }
 
@@ -328,7 +361,7 @@ class FastxReader {
             );
         }
         return cuda::std::unexpected(
-            parseError("FASTQ quality length does not match sequence length")
+            parseError("FASTQ quality length does not match sequence length", short_column)
         );
     }
 };

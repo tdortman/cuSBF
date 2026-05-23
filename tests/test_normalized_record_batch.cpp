@@ -25,7 +25,7 @@ TEST(NormalizedRecordBatchTest, RejectsOverlappingRanges) {
 
     const auto normalized = cusbf::normalize_record_batch<TestConfig>(batch);
     ASSERT_FALSE(normalized);
-    EXPECT_EQ(normalized.error().category, cusbf::ErrorCategory::invalid_argument);
+    EXPECT_EQ(normalized.error().category(), cusbf::ErrorCategory::invalid_argument);
 }
 
 TEST(NormalizedRecordBatchTest, PreservesRecordOrderMetadata) {

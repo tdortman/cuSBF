@@ -53,7 +53,7 @@ class ChunkStreamPair {
     [[nodiscard]] Result<void> sync_all() const {
         for (cudaStream_t stream : streams_) {
             if (stream != nullptr) {
-        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream));
+                CUSBF_CUDA_TRY(cudaStreamSynchronize(stream));
             }
         }
         return {};
