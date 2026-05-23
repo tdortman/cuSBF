@@ -50,6 +50,7 @@ __device__ __forceinline__ void load256BitGlobalNC(const T* ptr, T* out) {
     }
 }
 
+/// @brief Loads four @c uint64_t words via @c ld.global.nc.v4.u64 (sm_100+ only).
 __device__ __forceinline__ void load256BitGlobalNC(
     const uint64_t* ptr,
     uint64_t& out0,

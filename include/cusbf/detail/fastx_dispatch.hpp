@@ -32,11 +32,13 @@ enum class fastx_dispatch_path {
     chunked_stream,
 };
 
+/// @brief True for @ref fastx_dispatch_path::single_chunk_stream or @ref fastx_dispatch_path::single_chunk_mmap.
 [[nodiscard]] constexpr bool fastx_is_single_chunk_path(fastx_dispatch_path path) noexcept {
     return path == fastx_dispatch_path::single_chunk_stream ||
            path == fastx_dispatch_path::single_chunk_mmap;
 }
 
+/// @brief True when dispatch uses @ref FastxBufferReader over an mmap'd file.
 [[nodiscard]] constexpr bool fastx_uses_mmap_reader(fastx_dispatch_path path) noexcept {
     return path == fastx_dispatch_path::single_chunk_mmap ||
            path == fastx_dispatch_path::chunked_mmap;

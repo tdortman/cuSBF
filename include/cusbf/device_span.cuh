@@ -14,6 +14,8 @@ namespace cusbf {
  *
  * The distinct type prevents accidentally mixing host and device
  * pointers at compile time.
+ *
+ * Inherits @c cuda::std::span construction (pointer + size, range, etc.).
  */
 template <typename T>
 struct device_span : cuda::std::span<T> {

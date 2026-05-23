@@ -6,6 +6,7 @@
 
 namespace cusbf {
 
+/// @brief GPU Super Bloom filter (defined in @ref filter.cuh).
 template <typename Config>
 class filter;
 
@@ -42,10 +43,13 @@ struct Config {
     static constexpr uint16_t s = S_;
     /// Independent Bloom hash functions.
     static constexpr uint64_t hashCount = HashCount_;
+    /// Number of symbols in the alphabet.
     static constexpr uint64_t alphabetSize = Alphabet::symbolCount;
     /// Input bytes per symbol.
     static constexpr uint64_t symbolWidth = Alphabet::symbolWidth;
+    /// Bits per packed symbol in a uint64_t k-mer.
     static constexpr uint64_t symbolBits = cuda::std::bit_width(alphabetSize - 1);
+    /// Low @ref symbolBits mask for one encoded symbol.
     static constexpr uint64_t symbolMask = (uint64_t{1} << symbolBits) - 1;
     /// Bits per shard (filter block).
     static constexpr uint64_t filterBlockBits = 256;
@@ -54,6 +58,7 @@ struct Config {
 
     /// Bits per shard word.
     static constexpr uint64_t wordBits = 64;
+    /// 64-bit words per 256-bit shard.
     static constexpr uint64_t blockWordCount = filterBlockBits / wordBits;
     /// M-mers evaluated per k-mer window.
     static constexpr uint64_t minimizerSpan = k - m + 1;

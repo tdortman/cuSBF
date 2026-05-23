@@ -54,7 +54,7 @@ namespace cusbf {
  * block size, and alphabet at compile time. Host bulk APIs synchronize before
  * returning, device-span @c *_async methods do not.
  *
- * FASTX and record-batch paths inject @ref Config::Alphabet::separator between
+ * FASTX and record-batch paths inject alphabet separator bytes between
  * records so cross-record k-mers are never formed.
  *
  * @tparam Config Compile-time filter configuration (@ref cusbf::Config).
@@ -192,10 +192,14 @@ class filter {
         clear();
     }
 
+    /// Non-copyable (owns device shard storage).
     filter(const filter&) = delete;
     filter& operator=(const filter&) = delete;
+    /// Move-constructs, transfers shard vectors and staging buffers.
     filter(filter&&) = default;
+    /// Move-assigns shard storage and staging buffers.
     filter& operator=(filter&&) = default;
+    /// Destroys device allocations and releases staging scratch.
     ~filter() = default;
 
     /**
@@ -453,6 +457,13 @@ class filter {
     /**
      * @brief Queries all k-mers from a FASTA/FASTQ input stream via chunked streaming.
      *
+     * Returns aggregate counts only (no per-record hit vectors). For per-record callbacks
+     * use @ref query_fastx_records, for owning per-record hits use @ref query_fastx_detailed.
+     *
+     * @param input         Input stream containing FASTA or FASTQ records.
+     * @param fill_fraction Fraction of free GPU memory for per-chunk staging (default 0.7).
+     * @param stream        CUDA stream to use.
+     * @return Aggregate query summary for the whole stream.
      * @see insert_fastx
      */
     [[nodiscard]] FastxQueryReport query_fastx(
@@ -466,6 +477,13 @@ class filter {
     /**
      * @brief Queries all k-mers from a FASTA/FASTQ file.
      *
+     * Returns aggregate counts only. See @ref query_fastx_file_records and
+     * @ref query_fastx_file_detailed for per-record results.
+     *
+     * @param path          Path to a FASTA or FASTQ file (optionally gzip-compressed).
+     * @param fill_fraction Fraction of free GPU memory for per-chunk staging (default 0.7).
+     * @param stream        CUDA stream to use.
+     * @return Aggregate query summary for the whole file.
      * @see insert_fastx_file for dispatch and chunking behavior.
      */
     [[nodiscard]] FastxQueryReport query_fastx_file(
@@ -557,6 +575,10 @@ class filter {
      * 0 = absent. Invalid-symbol windows remain in the vector as 0 and are excluded from
      * queriedKmers.
      *
+     * @param input         Input stream containing FASTA or FASTQ records.
+     * @param fill_fraction Fraction of free GPU memory for per-chunk staging (default 0.7).
+     * @param stream        CUDA stream to use.
+     * @return Aggregate and per-record query results.
      * @see query_fastx
      */
     [[nodiscard]] FastxDetailedQueryReport query_fastx_detailed(
@@ -721,6 +743,7 @@ class filter {
         return symbols < Config::k ? 0 : symbols - Config::k + 1;
     }
 
+    /// @brief Builds a @ref RecordBatchView from a sequence buffer and record ranges.
     [[nodiscard]] static RecordBatchView
     make_batch_view(std::string_view sequence, const std::vector<RecordRange>& ranges) {
         return RecordBatchView{
@@ -742,6 +765,16 @@ class filter {
         total.positive_kmers += chunk.positive_kmers;
     }
 
+    /**
+     * @brief Queries a dense record batch and returns aggregate counts only.
+     *
+     * Normalizes @p batch internally, then runs a single GPU query without copying
+     * per-k-mer hits back for callbacks.
+     *
+     * @param batch  Dense record batch to query.
+     * @param stream CUDA stream to use.
+     * @return Aggregate query summary for the whole batch.
+     */
     [[nodiscard]] FastxQueryReport
     query_record_batch_aggregate(RecordBatchView batch, cuda::stream_ref stream) const {
         normalize_record_batch_into<Config>(
@@ -750,6 +783,15 @@ class filter {
         return query_normalized_record_batch_aggregate(stream);
     }
 
+    /**
+     * @brief Queries @ref normalized_sequence_scratch_ and returns aggregate counts only.
+     *
+     * Caller must populate normalized sequence and record metadata first (for example via
+     * @ref normalize_record_batch_into).
+     *
+     * @param stream CUDA stream to use.
+     * @return Aggregate query summary.
+     */
     [[nodiscard]] FastxQueryReport query_normalized_record_batch_aggregate(
         cuda::stream_ref stream
     ) const {
@@ -782,6 +824,19 @@ class filter {
         return report;
     }
 
+    /**
+     * @brief Queries normalized scratch buffers and invokes @p consume per record with hits.
+     *
+     * Uses @ref normalized_sequence_scratch_ and @ref normalized_records_scratch_. Each
+     * @ref RecordQueryView::hits span points into host scratch valid only during @p consume.
+     * @p input_sequence supplies original record bytes for @ref RecordQueryView::sequence
+     * (typically the dense @ref RecordBatchView::sequence passed to @ref query_record_batch).
+     *
+     * @param input_sequence Dense source sequence for per-record sequence slices.
+     * @param consume        Per-record callback.
+     * @param stream         CUDA stream to use.
+     * @return Aggregate query summary for the batch.
+     */
     template <typename Consumer>
     [[nodiscard]] FastxQueryReport query_normalized_record_batch_with_hits(
         std::string_view input_sequence,
@@ -1427,10 +1482,16 @@ class filter {
         ));
     }
 
+    /// @brief Number of k-mer windows in a device-resident encoded sequence.
     [[nodiscard]] static uint64_t sequence_kmer_count(device_span<const char> d_sequence) {
         return detail::SequenceKmerInput<Config>{d_sequence}.kmerCount();
     }
 
+    /**
+     * @brief Stages @p sequence on the device and returns a device span (H2D on @p stream).
+     *
+     * Grows @c d_sequence_ or ping-pong buffers as needed.
+     */
     [[nodiscard]] device_span<const char>
     staged_sequence_view(cuda::std::span<const char> sequence, cuda::stream_ref stream) const {
         stage_sequence(sequence, stream);

@@ -22,9 +22,11 @@ enum class fastx_chunk_mode { insert, query };
 
 /// @brief Driver-reported free device memory (bytes available for new allocations).
 struct cuda_free_memory {
+    /// Bytes reported free by @c cudaMemGetInfo.
     size_t free_bytes{};
 };
 
+/// @brief Queries current device free memory via @c cudaMemGetInfo.
 [[nodiscard]] inline cuda_free_memory query_cuda_free_memory() {
     size_t free_bytes = 0;
     size_t total_bytes = 0;

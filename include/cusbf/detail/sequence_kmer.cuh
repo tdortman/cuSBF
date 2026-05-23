@@ -88,7 +88,7 @@ __device__ __forceinline__ uint64_t advance_packed_kmer(uint64_t packed, uint8_t
            packedWindowMask<Config, K>();
 }
 
-/// @brief True when no symbol in the k-mer window is @ref Config::Alphabet::invalidSymbol.
+/// @brief True when no symbol in the k-mer window is the alphabet invalid sentinel.
 template <typename Config>
 __device__ __forceinline__ bool kmer_is_valid(const uint8_t* tile, uint64_t start) {
     _Pragma("unroll")

@@ -43,10 +43,12 @@ class ChunkStreamPair {
         destroy();
     }
 
+    /// @brief Non-blocking stream at @p index (0 or 1).
     [[nodiscard]] cuda::stream_ref operator[](size_t index) const noexcept {
         return {streams_.at(index)};
     }
 
+    /// @brief Blocks until both streams complete.
     void sync_all() const {
         for (cudaStream_t stream : streams_) {
             if (stream != nullptr) {

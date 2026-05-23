@@ -114,6 +114,7 @@ __host__ __device__ __forceinline__ void forEachHashIndex(Fn&& fn) {
     );
 }
 
+/// @brief Bit mask retaining the low @c Length symbols of a packed k-mer.
 template <typename Config, uint64_t Length>
 [[nodiscard]] __host__ __device__ __forceinline__ constexpr uint64_t packedWindowMask() {
     if constexpr (Length * Config::symbolBits >= 64) {
@@ -123,6 +124,7 @@ template <typename Config, uint64_t Length>
     }
 }
 
+/// @brief Extracts an @c m-mer or @c s-mer subwindow from a packed k-mer at @p start.
 template <typename Config, uint64_t WindowLength, uint64_t K>
 [[nodiscard]] __host__ __device__ __forceinline__ constexpr uint64_t
 extractPackedSubwindow(uint64_t packed_kmer, uint64_t start) {

@@ -111,12 +111,24 @@ concept Alphabet = requires(const char* input) {
  * Each symbol is encoded as a 2-bit value: A=0, C=1, T=2, G=3. Invalid bytes are encoded as 0xFF.
  */
 struct DnaAlphabet {
+    /// Input bytes per encoded symbol.
     static constexpr uint64_t symbolWidth = 1;
+    /// Number of valid symbols (A, C, G, T).
     static constexpr uint64_t symbolCount = 4;
+    /// Sentinel returned by @ref encode for invalid input bytes.
     static constexpr uint8_t invalidSymbol = 0xFFu;
+    /// Byte value used between concatenated records (must not encode as a valid symbol).
     static constexpr uint8_t separator = 'N';
+    /// Representative valid bytes for compile-time separator checks.
     static constexpr char validBytes[] = "ACGT";
 
+    /**
+     * @brief Maps one byte to a 2-bit symbol index, or @ref invalidSymbol.
+     *
+     * Accepts A/C/G/T in either case.
+     *
+     * @param input Pointer to one raw byte.
+     */
     [[nodiscard]] constexpr __host__ __device__ __forceinline__ static uint8_t encode(
         const char* input
     ) {
@@ -136,12 +148,22 @@ struct DnaAlphabet {
  * produce invalidSymbol.
  */
 struct DnaTripletAlphabet {
+    /// Input bytes per encoded symbol (one DNA triplet).
     static constexpr uint64_t symbolWidth = 3;
+    /// Number of packed triplet symbols.
     static constexpr uint64_t symbolCount = 64;
+    /// Sentinel returned by @ref encode for invalid triplets.
     static constexpr uint8_t invalidSymbol = 0xFFu;
+    /// Separator byte between concatenated records.
     static constexpr uint8_t separator = 'N';
+    /// Representative valid bytes for compile-time separator checks.
     static constexpr char validBytes[] = "ACGT";
 
+    /**
+     * @brief Maps three DNA bytes to a 6-bit triplet index, or @ref invalidSymbol.
+     *
+     * @param input Pointer to three raw bytes.
+     */
     [[nodiscard]] constexpr __host__ __device__ __forceinline__ static uint8_t encode(
         const char* input
     ) {
@@ -165,12 +187,24 @@ struct DnaTripletAlphabet {
  *  0xFF.
  */
 struct ProteinAlphabet {
+    /// Input bytes per encoded symbol.
     static constexpr uint64_t symbolWidth = 1;
+    /// Number of letter symbols (A–Z).
     static constexpr uint64_t symbolCount = 26;
+    /// Sentinel returned by @ref encode for invalid input bytes.
     static constexpr uint8_t invalidSymbol = 0xFFu;
+    /// Separator byte between concatenated records.
     static constexpr uint8_t separator = '*';
+    /// Representative valid bytes for compile-time separator checks.
     static constexpr char validBytes[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
+    /**
+     * @brief Maps one amino-acid letter to a 5-bit index, or @ref invalidSymbol.
+     *
+     * Accepts A–Z in either case.
+     *
+     * @param input Pointer to one raw byte.
+     */
     [[nodiscard]] constexpr __host__ __device__ __forceinline__ static uint8_t encode(
         const char* input
     ) {

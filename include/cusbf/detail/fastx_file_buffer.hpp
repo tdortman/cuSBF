@@ -51,16 +51,24 @@ class FastxFileBuffer {
         release();
     }
 
+    /**
+     * @brief Loads an uncompressed file via mmap (Linux) or read into memory.
+     *
+     * @param path Path to a non-gzip FASTA/FASTQ file.
+     * @return Owning buffer with @ref data() spanning the full file.
+     */
     [[nodiscard]] static std::unique_ptr<FastxFileBuffer> load(std::string_view path) {
         auto buffer = std::make_unique<FastxFileBuffer>();
         buffer->load_from_path(path);
         return buffer;
     }
 
+    /// @brief Contiguous read-only file bytes.
     [[nodiscard]] std::string_view data() const noexcept {
         return std::string_view{data_, size_};
     }
 
+    /// @brief True when the file is empty or load produced no bytes.
     [[nodiscard]] bool empty() const noexcept {
         return size_ == 0;
     }
@@ -144,6 +152,7 @@ class FastxFileBuffer {
     }
 };
 
+/// @brief True when @p path is not gzip-compressed (mmap path is usable).
 [[nodiscard]] inline bool fastx_file_supports_memory_map(std::string_view path) {
     return !isGzipFile(path);
 }

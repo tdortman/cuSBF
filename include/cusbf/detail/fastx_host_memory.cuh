@@ -66,6 +66,7 @@ inline constexpr size_t kDefaultFastxHostRamSlackBytes = 4u << 30;
     return std::min(cap_bytes, static_cast<uint64_t>(ram_budget));
 }
 
+/// @brief True when uncompressed @p path size is within @ref fastx_memory_map_max_bytes.
 [[nodiscard]] inline bool fastx_file_fits_in_memory(std::string_view path) {
 #if defined(__linux__)
     const std::string path_string(path);

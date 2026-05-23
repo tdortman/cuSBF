@@ -14,9 +14,22 @@ namespace cusbf::detail {
 /// @brief FASTA/FASTQ parser over a contiguous in-memory buffer.
 class FastxBufferReader {
    public:
+    /**
+     * @brief Constructs a reader over a contiguous in-memory FASTA/FASTQ buffer.
+     *
+     * @param data         Entire file or chunk payload.
+     * @param source_name  Label used in parse error messages.
+     */
     explicit FastxBufferReader(std::string_view data, std::string_view source_name = "<buffer>")
         : data_(data), source_name_(source_name) {}
 
+    /**
+     * @brief Reads the next record into @p record.
+     *
+     * @param record Output record, cleared before fill.
+     * @return @c false at end-of-buffer, @c true when a record was read.
+     * @throws std::runtime_error on parse errors.
+     */
     [[nodiscard]] bool nextRecord(FastxRecord& record) {
         record.header.clear();
         record.sequence.clear();
@@ -51,12 +64,23 @@ class FastxBufferReader {
         return true;
     }
 
+    /// @brief Entire mmap or owned buffer backing this reader.
     [[nodiscard]] std::string_view buffer() const noexcept {
         return data_;
     }
 
-    /// @brief Parses one record into @p sequence, or a range into @p buffer when the sequence is
-    /// one mmap line.
+    /**
+     * @brief Parses one record with optional zero-copy sequence views for single-line FASTA.
+     *
+     * When the sequence fits one mmap line, returns a @ref RecordRange into @p buffer instead of
+     * appending to @p sequence. Otherwise appends sequence bytes to @p sequence and returns an
+     * owned range offset.
+     *
+     * @param record   Output header (sequence may stay empty on zero-copy path).
+     * @param sequence Growing buffer for multi-line or owned FASTA sequence data.
+     * @param buffer   Set to the full mmap view on first zero-copy record.
+     * @return Record byte range, or @c std::nullopt at end-of-buffer.
+     */
     [[nodiscard]] std::optional<RecordRange>
     appendNextRecord(FastxRecord& record, std::string& sequence, std::string_view& buffer) {
         record.header.clear();

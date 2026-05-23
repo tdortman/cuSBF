@@ -39,30 +39,37 @@ class FastxPinnedSequenceBuffer {
         release();
     }
 
+    /// @brief Writable pinned host pointer (may be @c nullptr before @ref reserve).
     [[nodiscard]] char* data() noexcept {
         return data_;
     }
 
+    /// @brief Read-only view of @ref data().
     [[nodiscard]] const char* data() const noexcept {
         return data_;
     }
 
+    /// @brief Logical byte length (≤ @ref capacity).
     [[nodiscard]] size_t size() const noexcept {
         return size_;
     }
 
+    /// @brief Allocated pinned bytes.
     [[nodiscard]] size_t capacity() const noexcept {
         return capacity_;
     }
 
+    /// @brief @ref data() as a string view of length @ref size().
     [[nodiscard]] std::string_view view() const noexcept {
         return std::string_view{data_, size_};
     }
 
+    /// @brief Sets logical size to zero without freeing capacity.
     void clear() noexcept {
         size_ = 0;
     }
 
+    /// @brief Frees pinned host memory and resets size and capacity.
     void release() {
         if (data_ != nullptr) {
             CUSBF_CUDA_CALL(cudaFreeHost(data_));
@@ -72,6 +79,7 @@ class FastxPinnedSequenceBuffer {
         capacity_ = 0;
     }
 
+    /// @brief Grows pinned allocation to at least @p nbytes, preserving existing bytes.
     void reserve(size_t nbytes) {
         if (nbytes <= capacity_) {
             return;
@@ -89,6 +97,7 @@ class FastxPinnedSequenceBuffer {
         capacity_ = nbytes;
     }
 
+    /// @brief Sets logical size to @p nbytes, reserving if needed.
     void set_size(size_t nbytes) {
         if (nbytes > capacity_) {
             reserve(nbytes);

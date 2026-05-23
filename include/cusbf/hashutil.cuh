@@ -79,8 +79,8 @@ constexpr __host__ __device__ __forceinline__ uint64_t finalize(uint64_t h) {
  * @brief Computes the xxHash-64 digest of a value.
  *
  * @tparam T     Type of the value, hashed as raw bytes.
- * @param  key   Value to hash.
- * @param  seed  Optional seed (default 0).
+ * @param key   Value to hash.
+ * @param seed  Optional seed (default 0).
  * @return 64-bit hash digest.
  */
 template <typename T>
@@ -204,8 +204,6 @@ constexpr __host__ __device__ __forceinline__ uint64_t hash64(uint64_t key) {
  * @param key Packed m-mer input.
  * @return Hash value used to select the minimum (minimizer).
  */
-// sufficient for minimizer (shard) selection where only uniformity matters,
-// not full avalanche quality.
 constexpr __host__ __device__ __forceinline__ uint64_t minimizer_hash64(uint64_t key) {
     return key * 0x9E3779B97F4A7C15ULL;
 }

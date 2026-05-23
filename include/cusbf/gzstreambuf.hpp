@@ -14,8 +14,15 @@
 
 namespace cusbf::detail {
 
+/// @brief @c std::streambuf over a gzip file (zlib @c gzread).
 class GzStreambuf : public std::streambuf {
    public:
+    /**
+     * @brief Opens @p path for binary gzip read.
+     *
+     * @param path Filesystem path to a @c .gz file.
+     * @throws std::runtime_error if zlib cannot open the file.
+     */
     explicit GzStreambuf(std::string_view path) : file_(gzopen(std::string(path).c_str(), "rb")) {
         if (!file_) {
             throw std::runtime_error("Failed to open gzip file: " + std::string(path));
@@ -55,8 +62,14 @@ class GzStreambuf : public std::streambuf {
     char buffer_[kBufferSize];
 };
 
+/// @brief @c std::istream adapter for @ref GzStreambuf.
 class GzIstream : public std::istream {
    public:
+    /**
+     * @brief Opens a gzip file as an input stream.
+     *
+     * @param path Filesystem path to a @c .gz file.
+     */
     explicit GzIstream(std::string_view path)
         : std::istream(nullptr), sb_(std::make_unique<GzStreambuf>(path)) {
         rdbuf(sb_.get());
@@ -66,6 +79,7 @@ class GzIstream : public std::istream {
     std::unique_ptr<GzStreambuf> sb_;
 };
 
+/// @brief True when @p path begins with the gzip magic bytes (@c 0x1F, @c 0x8B).
 inline bool isGzipFile(std::string_view path) {
     FILE* f = std::fopen(std::string(path).c_str(), "rb");
     if (!f) {
