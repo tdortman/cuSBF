@@ -157,8 +157,7 @@ class FastxReader {
      * @param source_name  Label used in parse error messages.
      */
     explicit FastxReader(std::istream& input, std::string_view source_name = "<stream>")
-        : input_(input), source_name_(source_name) {
-    }
+        : input_(input), source_name_(source_name) {}
 
     /**
      * @brief Reads the next FASTA/FASTQ record into @p record.

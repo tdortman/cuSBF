@@ -15,8 +15,7 @@ namespace cusbf::detail {
 class FastxBufferReader {
    public:
     explicit FastxBufferReader(std::string_view data, std::string_view source_name = "<buffer>")
-        : data_(data), source_name_(source_name) {
-    }
+        : data_(data), source_name_(source_name) {}
 
     [[nodiscard]] bool nextRecord(FastxRecord& record) {
         record.header.clear();

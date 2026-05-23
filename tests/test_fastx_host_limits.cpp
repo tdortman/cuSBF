@@ -33,9 +33,11 @@ TEST(FastxHostLimitsTest, FastxMaxHostChunkMbOverride) {
 }
 
 TEST(FastxHostLimitsTest, HostByteLimitDisabledWhenCapIsMax) {
-    EXPECT_FALSE(cusbf::detail::fastx_chunk_reached_host_byte_limit(
-        std::numeric_limits<size_t>::max(), 1u << 30
-    ));
+    EXPECT_FALSE(
+        cusbf::detail::fastx_chunk_reached_host_byte_limit(
+            std::numeric_limits<size_t>::max(), 1u << 30
+        )
+    );
 }
 
 #if defined(__linux__)

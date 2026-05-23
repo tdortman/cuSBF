@@ -27,8 +27,7 @@ struct device_span : cuda::std::span<T> {
     template <typename U>
         requires std::is_convertible_v<U (*)[], T (*)[]>
     constexpr explicit device_span(device_span<U> other) noexcept
-        : cuda::std::span<T>(other.data(), other.size()) {
-    }
+        : cuda::std::span<T>(other.data(), other.size()) {}
 };
 
 }  // namespace cusbf

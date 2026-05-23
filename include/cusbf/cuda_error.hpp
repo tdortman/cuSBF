@@ -19,8 +19,7 @@ class CudaError : public std::runtime_error {
         : std::runtime_error(
               std::string(file) + ":" + std::to_string(line) + " " + cudaGetErrorString(code)
           ),
-          code_(code) {
-    }
+          code_(code) {}
 
     /// @brief CUDA error code that triggered this exception.
     [[nodiscard]] cudaError_t code() const noexcept {

@@ -26,8 +26,7 @@ struct LargeFastaFile {
     LargeFastaFile() = default;
 
     LargeFastaFile(std::string path_value, GeneratedFastaStats stats_value)
-        : path(std::move(path_value)), stats(stats_value) {
-    }
+        : path(std::move(path_value)), stats(stats_value) {}
 
     LargeFastaFile(const LargeFastaFile&) = delete;
     LargeFastaFile& operator=(const LargeFastaFile&) = delete;
@@ -82,9 +81,7 @@ struct LargeFastaFile {
 
     std::ofstream output(output_path, std::ios::binary | std::ios::trunc);
     if (!output.is_open()) {
-        throw std::runtime_error(
-            "Failed to open large FASTA output: " + output_path.string()
-        );
+        throw std::runtime_error("Failed to open large FASTA output: " + output_path.string());
     }
 
     constexpr std::string_view sequence_chunk = "ACGTACGTACGTACGTACGTACGTACGTACGT";
@@ -128,9 +125,9 @@ struct LargeFastaFile {
     uint64_t k
 ) {
     const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const std::filesystem::path output_path = directory / (
-        "large-input-" + std::to_string(target_file_bytes) + "-" + std::to_string(timestamp) + ".fa"
-    );
+    const std::filesystem::path output_path =
+        directory / ("large-input-" + std::to_string(target_file_bytes) + "-" +
+                     std::to_string(timestamp) + ".fa");
     return generate_fasta(output_path, target_file_bytes, sequence_bytes_per_record, k);
 }
 

@@ -95,8 +95,7 @@ void maybe_log_duration(const char* label, const Duration& duration) {
     if (!large_fastx_timing_enabled()) {
         return;
     }
-    std::cerr << label << ": "
-              << std::chrono::duration<double>(duration).count() << " s\n";
+    std::cerr << label << ": " << std::chrono::duration<double>(duration).count() << " s\n";
 }
 
 [[nodiscard]] GpuMemorySnapshot query_gpu_memory() {
@@ -130,7 +129,8 @@ TEST(LargeFastxOutOfCore, ProcessesGeneratedFastaAtConfiguredSize) {
 
     const uint64_t target_file_bytes = parse_target_file_bytes();
     if (target_file_bytes == 0) {
-        GTEST_SKIP() << "Set CUSBF_LARGE_FASTX_BYTES, CUSBF_LARGE_FASTX_MB, or CUSBF_LARGE_FASTX_GB";
+        GTEST_SKIP()
+            << "Set CUSBF_LARGE_FASTX_BYTES, CUSBF_LARGE_FASTX_MB, or CUSBF_LARGE_FASTX_GB";
     }
 
     const uint64_t record_bytes = parse_record_bytes_env();

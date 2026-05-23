@@ -156,19 +156,20 @@ TEST_F(BloomFilterTest, RecordBatchInsertAndQueryInjectRecordBoundaries) {
     const auto insertReport = filter.insert_record_batch(batch);
 
     std::vector<StreamedRecord> records;
-    const auto summary = filter.query_record_batch(batch, [&](const cusbf::RecordQueryView& record) {
-        records.push_back(
-            StreamedRecord{
-                record.record_index,
-                {},
-                std::string(record.sequence),
-                record.queriedBases,
-                record.queriedKmers,
-                record.positive_kmers,
-                std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
-            }
-        );
-    });
+    const auto summary =
+        filter.query_record_batch(batch, [&](const cusbf::RecordQueryView& record) {
+            records.push_back(
+                StreamedRecord{
+                    record.record_index,
+                    {},
+                    std::string(record.sequence),
+                    record.queriedBases,
+                    record.queriedKmers,
+                    record.positive_kmers,
+                    std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
+                }
+            );
+        });
 
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(insertReport.recordsIndexed, 2);
@@ -372,19 +373,20 @@ TEST_F(BloomFilterTest, QueryFastxRecordsPreservesWrappedFastaRecordOrder) {
     );
 
     std::vector<StreamedRecord> records;
-    const auto summary = filter.query_fastx_records(input, [&](const cusbf::FastxRecordView& record) {
-        records.push_back(
-            StreamedRecord{
-                record.record_index,
-                std::string(record.header),
-                std::string(record.sequence),
-                record.queriedBases,
-                record.queriedKmers,
-                record.positive_kmers,
-                std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
-            }
-        );
-    });
+    const auto summary =
+        filter.query_fastx_records(input, [&](const cusbf::FastxRecordView& record) {
+            records.push_back(
+                StreamedRecord{
+                    record.record_index,
+                    std::string(record.header),
+                    std::string(record.sequence),
+                    record.queriedBases,
+                    record.queriedKmers,
+                    record.positive_kmers,
+                    std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
+                }
+            );
+        });
 
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(summary.recordsQueried, 2);

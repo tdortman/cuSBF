@@ -23,8 +23,7 @@ class filter_ref {
     using block_type = filter_block<Config>;
 
     /// Default-constructed empty reference (no shard storage).
-    __host__ __device__ constexpr filter_ref() noexcept : blocks_{}, num_blocks_{} {
-    }
+    __host__ __device__ constexpr filter_ref() noexcept : blocks_{}, num_blocks_{} {}
 
     /**
      * @brief Constructs a reference over @p blocks spanning @p num_blocks shards.
@@ -32,8 +31,7 @@ class filter_ref {
      * @p num_blocks must be a power of two, shard selection uses low bits of the minimizer hash.
      */
     __host__ __device__ constexpr filter_ref(block_type* blocks, uint64_t num_blocks) noexcept
-        : blocks_(blocks), num_blocks_(num_blocks) {
-    }
+        : blocks_(blocks), num_blocks_(num_blocks) {}
 
     /// @brief Raw pointer to the first 256-bit filter block (shard array base).
     [[nodiscard]] __host__ __device__ block_type* blocks() const noexcept {

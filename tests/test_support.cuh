@@ -70,8 +70,7 @@ inline bool allOnes(const std::vector<uint8_t>& values) {
 struct TempFile {
     std::string path;
 
-    explicit TempFile(std::string pathValue) : path(std::move(pathValue)) {
-    }
+    explicit TempFile(std::string pathValue) : path(std::move(pathValue)) {}
 
     TempFile(const TempFile&) = delete;
     TempFile& operator=(const TempFile&) = delete;

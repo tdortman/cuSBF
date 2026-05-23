@@ -5,15 +5,21 @@
 using TestConfig = cusbf::Config<31, 28, 16, 4>;
 
 TEST(FastxChunkTest, ZeroFillFractionForcesImmediateFlush) {
-    EXPECT_TRUE(cusbf::detail::fastx_chunk_reached_staging_budget<TestConfig>(
-        cusbf::detail::fastx_chunk_mode::insert, 0, 8, 1
-    ));
-    EXPECT_TRUE(cusbf::detail::fastx_chunk_reached_staging_budget<TestConfig>(
-        cusbf::detail::fastx_chunk_mode::query, 0, 8, 1
-    ));
-    EXPECT_FALSE(cusbf::detail::fastx_chunk_reached_staging_budget<TestConfig>(
-        cusbf::detail::fastx_chunk_mode::insert, 0, 0, 0
-    ));
+    EXPECT_TRUE(
+        cusbf::detail::fastx_chunk_reached_staging_budget<TestConfig>(
+            cusbf::detail::fastx_chunk_mode::insert, 0, 8, 1
+        )
+    );
+    EXPECT_TRUE(
+        cusbf::detail::fastx_chunk_reached_staging_budget<TestConfig>(
+            cusbf::detail::fastx_chunk_mode::query, 0, 8, 1
+        )
+    );
+    EXPECT_FALSE(
+        cusbf::detail::fastx_chunk_reached_staging_budget<TestConfig>(
+            cusbf::detail::fastx_chunk_mode::insert, 0, 0, 0
+        )
+    );
 }
 
 TEST(FastxChunkTest, QueryStagingExceedsInsertStaging) {
@@ -28,8 +34,7 @@ TEST(FastxChunkTest, QueryStagingExceedsInsertStaging) {
 
 TEST(FastxChunkTest, StagingBudgetReservesSlack) {
     constexpr size_t free_bytes = 1u << 30;
-    const size_t budget =
-        cusbf::detail::fastx_staging_budget_bytes<TestConfig>(0.5, free_bytes);
+    const size_t budget = cusbf::detail::fastx_staging_budget_bytes<TestConfig>(0.5, free_bytes);
     const size_t expected = static_cast<size_t>(
         0.5 * static_cast<double>(free_bytes - cusbf::detail::fastx_chunk_slack_bytes())
     );

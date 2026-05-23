@@ -18,10 +18,7 @@
 namespace cusbf::detail {
 
 /// @brief FASTX mode used to size GPU staging buffers.
-enum class fastx_chunk_mode {
-    insert,
-    query
-};
+enum class fastx_chunk_mode { insert, query };
 
 /// @brief Driver-reported free device memory (bytes available for new allocations).
 struct cuda_free_memory {

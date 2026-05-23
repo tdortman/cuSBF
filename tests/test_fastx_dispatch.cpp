@@ -15,8 +15,7 @@ namespace {
 struct TempFile {
     std::string path;
 
-    explicit TempFile(std::string path_value) : path(std::move(path_value)) {
-    }
+    explicit TempFile(std::string path_value) : path(std::move(path_value)) {}
 
     ~TempFile() {
         if (!path.empty()) {
@@ -56,9 +55,11 @@ TEST(FastxDispatchTest, SmallFileSelectsSingleChunkStream) {
     );
     const uint64_t file_bytes = cusbf::detail::fastx_file_bytes(file.path);
     ASSERT_GT(file_bytes, 0u);
-    EXPECT_TRUE(cusbf::detail::fastx_fits_single_gpu_chunk<DispatchConfig>(
-        cusbf::detail::fastx_chunk_mode::insert, 0.7, file_bytes
-    ));
+    EXPECT_TRUE(
+        cusbf::detail::fastx_fits_single_gpu_chunk<DispatchConfig>(
+            cusbf::detail::fastx_chunk_mode::insert, 0.7, file_bytes
+        )
+    );
     EXPECT_EQ(
         cusbf::detail::select_fastx_dispatch_path<DispatchConfig>(
             file.path, cusbf::detail::fastx_chunk_mode::insert, 0.7
@@ -69,9 +70,11 @@ TEST(FastxDispatchTest, SmallFileSelectsSingleChunkStream) {
 
 TEST(FastxDispatchTest, LargeFileDoesNotSelectSingleChunkStream) {
     const uint64_t huge_bytes = static_cast<uint64_t>(1ull << 40);
-    EXPECT_FALSE(cusbf::detail::fastx_fits_single_gpu_chunk<DispatchConfig>(
-        cusbf::detail::fastx_chunk_mode::insert, 0.7, huge_bytes
-    ));
+    EXPECT_FALSE(
+        cusbf::detail::fastx_fits_single_gpu_chunk<DispatchConfig>(
+            cusbf::detail::fastx_chunk_mode::insert, 0.7, huge_bytes
+        )
+    );
 }
 
 TEST(FastxDispatchTest, SingleChunkStreamMaxBelowMultiGibInputs) {

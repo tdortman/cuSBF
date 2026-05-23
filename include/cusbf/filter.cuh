@@ -930,8 +930,7 @@ class filter {
         FastxChunkAssembly chunk(sequence_reserve_bytes);
 
         if (detail::fastx_is_single_chunk_path(dispatch_path) && stream.get() == nullptr) {
-            while (collect_next_fastx_record(reader, record, chunk)) {
-            }
+            while (collect_next_fastx_record(reader, record, chunk)) {}
             if (!chunk.empty()) {
                 accumulate_insert_report(
                     report,
@@ -1037,8 +1036,7 @@ class filter {
         FastxChunkAssembly chunk(sequence_reserve_bytes);
 
         if (detail::fastx_is_single_chunk_path(dispatch_path) && stream.get() == nullptr) {
-            while (collect_next_fastx_record(reader, record, chunk)) {
-            }
+            while (collect_next_fastx_record(reader, record, chunk)) {}
             if (!chunk.empty()) {
                 accumulate_query_report(
                     report,
