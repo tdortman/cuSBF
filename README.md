@@ -45,10 +45,18 @@ Benchmarks can be reproduced with:
 
 ## Requirements
 
+- Linux (x86_64 or aarch64) with an NVIDIA GPU and driver
 - CUDA Toolkit >= 13.1
-- C++20 compatible host compiler
-- Meson build system
+- GCC or Clang host compiler (C++20)
+- Meson and Ninja
 - NVIDIA GPU with compute capability 8.0+ (Ampere, Lovelace, Hopper, Blackwell)
+
+### Platform support
+
+cuSBF is developed and tested on **Linux** only.
+
+- **WSL2** on Windows with is a reasonable dev environment (See [NVIDIA docs](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)).
+- **Native Windows and macOS** are not supported or tested. The build uses Linux-specific FASTX paths (for example `mmap`) and host tooling assumptions (GCC/Clang, GNU statement expressions in `CUSBF_TRY`/`CUSBF_UNWRAP`).
 
 ## Building
 
@@ -57,106 +65,102 @@ meson setup build
 ninja -C build
 ```
 
-Benchmarks and tests are built automatically when this is a standalone project, but skipped when used as a subproject. Control with Meson feature options:
+When this repo is the root Meson project, **benchmarks**, **tests**, and **examples** build by default. As a subproject they are skipped unless you force them on.
 
-| Option                             | Behaviour                                                       |
-| ---------------------------------- | --------------------------------------------------------------- |
-| `-Dbenchmarks=auto` (default)      | Build benchmarks when standalone, skip when subproject          |
-| `-Dbenchmarks=enabled`             | Always build benchmarks                                         |
-| `-Dbenchmarks=disabled`            | Never build benchmarks                                          |
-| `-Dtests=auto` (default)           | Build tests when standalone, skip when subproject               |
-| `-Dtests=enabled`                  | Always build tests                                              |
-| `-Dtests=disabled`                 | Never build tests                                               |
-| `-Dexamples=auto` (default)        | Build examples when standalone, skip when subproject            |
-| `-Dexamples=enabled`               | Always build examples                                           |
-| `-Dexamples=disabled`              | Never build examples                                            |
-| `-Dparam_sweep=disabled` (default) | Never build parameter-sweep benchmark (s, m) for DNA or protein |
-| `-Dparam_sweep=enabled`            | Build parameter-sweep benchmark (s, m) for DNA or protein       |
-| `-Dparam_sweep_alphabet=dna`       | Alphabet for param_sweep: `dna` or `protein`                    |
+| Option                 | Type    | Default    | Description                                                 |
+| ---------------------- | ------- | ---------- | ----------------------------------------------------------- |
+| `benchmarks`           | feature | `auto`     | Google Benchmark binaries                                   |
+| `tests`                | feature | `auto`     | GoogleTest suite                                            |
+| `examples`             | feature | `auto`     | Example CLI                                                 |
+| `param_sweep`          | feature | `disabled` | Parameter-sweep binaries (large, see below)                 |
+| `param_sweep_alphabet` | combo   | `dna`      | `dna` or `protein` when `param_sweep` is enabled            |
+| `large_fastx_tests`    | feature | `disabled` | Large generated FASTX test (`CUSBF_LARGE_FASTX_*` env vars) |
+
+Each **feature** option accepts `auto`, `enabled`, or `disabled`:
+
+- `auto` — on for a standalone checkout, off when cuSBF is a subproject
+- `enabled` / `disabled` — override regardless of project layout
 
 > [!IMPORTANT]
-> The parameter sweep is disabled by default for a reason, there are 208 binaries for the entire sweep when using the DNA alphabet.
-
-Examples:
+> Enabling `param_sweep` builds many binaries (208 for the DNA alphabet). Leave it disabled unless you need that sweep.
 
 ```bash
-# Standalone: build everything except parameter sweep (default)
+# Default standalone build
 meson setup build
 
-# Standalone: skip benchmarks and tests
+# Faster configure: library + examples only
 meson setup build -Dbenchmarks=disabled -Dtests=disabled
 
-# Subproject: force benchmarks and tests on
-meson setup build -Dbenchmarks=enabled -Dtests=enabled
+# Subproject consumer forcing tests on
+meson setup build -Dtests=enabled
 
-# Parameter-sweep benchmark (DNA, default)
+# Parameter sweep
 meson setup build -Dparam_sweep=enabled
-
-# Parameter-sweep benchmark (protein)
 meson setup build -Dparam_sweep=enabled -Dparam_sweep_alphabet=protein
 ```
 
 ## Usage
 
+Fallible APIs return `cusbf::Result<T>` (a thin wrapper over `cuda::std::expected<T, Error>`). Use `return Err(error)` (`cuda::std::unexpected<Error>`, deduces `Result<T>`) or `return Ok()` / `return {}` for `Result<void>`. For success with a value, `return value` is enough. Two helpers unwrap results:
+
+| Macro                | On failure                                                            | Use when                                                          |
+| -------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `CUSBF_TRY(expr)`    | Copies the error, then `return cuda::std::unexpected<Error>(...)` from the **enclosing** function | The caller returns `Result` (library glue, `examples/cusbf-main`) |
+| `CUSBF_UNWRAP(expr)` | `throw std::runtime_error(message())`                                 | Tests, `main`, or other code that does not return `Result`        |
+
+Both work as statements or in initializers (`auto x = CUSBF_UNWRAP(...)`). For full control (typed errors, exit codes), use `if (!result)` instead.
+
+### Quick example (`CUSBF_UNWRAP`)
+
 ```cpp
 #include <cusbf/filter.cuh>
 
-// Configure the filter: k-mer length, s-mer width, minimizer width, hash count
 using Config = cusbf::Config<31, 28, 16, 4>;
 
-// Create a filter with the desired capacity (in bits)
-cusbf::filter<Config> filter(1 << 24);  // ~16M bits
+int main() {
+    cusbf::filter<Config> filter(1 << 24);
 
-// Insert k-mers from a DNA sequence (synchronous)
-filter.insert_sequence("ACGTACGTACGTACGTACGTACGTACGTACGT");
+    CUSBF_UNWRAP(filter.insert_sequence("ACGTACGTACGTACGTACGTACGTACGTACGT"));
+    const auto hits = CUSBF_UNWRAP(filter.contains_sequence("ACGTACGTACGTACGTACGTACGTACGTACGT"));
 
-// Query k-mers (returns vector<uint8_t>, 1 = present, 0 = absent)
-auto hits = filter.contains_sequence("ACGTACGTACGTACGTACGTACGTACGTACGT");
+    CUSBF_UNWRAP(filter.insert_fastx_file("reference.fasta"));
+    const auto summary = CUSBF_UNWRAP(filter.query_fastx_file("queries.fastq"));
 
-// Device-resident API (async, no synchronization)
-thrust::device_vector<char> d_seq = ...;
-thrust::device_vector<uint8_t> d_results(numKmers);
-filter.insert_sequence_async(cusbf::device_span<const char>(d_seq));
-filter.contains_sequence_async(
-    cusbf::device_span<const char>(d_seq),
-    cusbf::device_span<uint8_t>(d_results)
-);
-
-// Dense record batch API: one concatenated payload plus explicit record ranges.
-std::string batchSequence = "ACGTACGTTGCATGCA";
-std::vector<cusbf::RecordRange> batchRanges{
-    {0, 8},
-    {8, 8},
-};
-auto batchSummary = filter.query_record_batch(
-    {
-        batchSequence,
-        cuda::std::span<const cusbf::RecordRange>{batchRanges.data(), batchRanges.size()},
-    },
-    [](const cusbf::RecordQueryView& record) {
-        // record.sequence is the original record, record.hits is one bool per k-mer
-    }
-);
-
-// FASTA/FASTQ file insertion and aggregate query (chunked internally for large inputs)
-filter.insert_fastx_file("reference.fasta");
-auto summary = filter.query_fastx_file("queries.fastq");
-
-// Streaming FASTX query emits each record as soon as its chunk completes
-auto streamed = filter.query_fastx_file_records(
-    "queries.fastq",
-    [](const cusbf::FastxRecordView& record) {
-        // record.header, record.sequence, record.queriedKmers, record.hits
-    }
-);
-
-// Detailed FASTX query keeps owning per-record copies in source order
-auto detailed = filter.query_fastx_file_detailed("queries.fastq");
-
-// Inspect filter state
-double load = filter.load_factor();  // fraction of set bits
-uint64_t bits = filter.filter_bits();
+    (void)hits;
+    (void)summary;
+    return 0;
+}
 ```
+
+### Propagating errors (`CUSBF_TRY`)
+
+When the caller already returns `Result`, use `CUSBF_TRY` so failures propagate without exceptions:
+
+```cpp
+[[nodiscard]] cusbf::Result<void> run(cusbf::filter<Config>& filter) {
+    CUSBF_TRY(filter.insert_fastx_file("reference.fasta"));
+    const auto summary = CUSBF_TRY(filter.query_fastx_file("queries.fastq"));
+    (void)summary;
+    return cusbf::Ok();
+}
+```
+
+Async device APIs, record batches, and streaming FASTX callbacks follow the same pattern. `filter.load_factor()` and `filter.filter_bits()` are synchronous and do not return `Result`.
+
+### Inspecting errors
+
+```cpp
+if (const auto result = filter.query_fastx_file("queries.fastq"); !result) {
+    const cusbf::Error& err = result.error();
+    std::cerr << err.message() << '\n';
+    if (const cusbf::FastxParseError* parse = err.as_fastx_parse()) {
+        // parse->location.file / .line / .column
+    }
+    return 1;
+}
+```
+
+`CUSBF_CUDA_TRY` wraps CUDA runtime calls into `Result<void>`; `CUSBF_CUDA_CALL` / `CUSBF_CUDA_ABORT` are for throw/abort paths only.
 
 ### Configuration Options
 
@@ -177,10 +181,14 @@ The `Config` template accepts the following parameters:
 #include <cusbf/filter.cuh>
 
 using ProteinConfig = cusbf::Config<12, 10, 6, 4, 256, cusbf::ProteinAlphabet>;
-cusbf::filter<ProteinConfig> filter(1 << 24);
 
-filter.insert_sequence("ACDEFGHIKLMNPQRSTVWY");
-auto hits = filter.contains_sequence("ACDEFGHIKLMNPQRSTVWY");
+[[nodiscard]] cusbf::Result<void> run_protein() {
+    cusbf::filter<ProteinConfig> filter(1 << 24);
+    CUSBF_TRY(filter.insert_sequence("ACDEFGHIKLMNPQRSTVWY"));
+    const auto hits = CUSBF_TRY(filter.contains_sequence("ACDEFGHIKLMNPQRSTVWY"));
+    (void)hits;
+    return cusbf::Ok();
+}
 ```
 
 ## Related Publications

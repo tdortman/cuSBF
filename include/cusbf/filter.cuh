@@ -987,7 +987,7 @@ class filter {
 
         const auto gpu_memory = detail::query_cuda_free_memory();
         if (!gpu_memory) {
-            return cuda::std::unexpected(Error::resource(gpu_memory.error().message()));
+            return Err(Error::resource(gpu_memory.error().message()));
         }
         const auto staging_budget_bytes =
             detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
@@ -1111,7 +1111,7 @@ class filter {
 
         const auto gpu_memory = detail::query_cuda_free_memory();
         if (!gpu_memory) {
-            return cuda::std::unexpected(Error::resource(gpu_memory.error().message()));
+            return Err(Error::resource(gpu_memory.error().message()));
         }
         const auto staging_budget_bytes =
             detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
@@ -1346,7 +1346,7 @@ class filter {
 
         const auto gpu_memory = detail::query_cuda_free_memory();
         if (!gpu_memory) {
-            return cuda::std::unexpected(Error::resource(gpu_memory.error().message()));
+            return Err(Error::resource(gpu_memory.error().message()));
         }
         const auto staging_budget_bytes =
             detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);

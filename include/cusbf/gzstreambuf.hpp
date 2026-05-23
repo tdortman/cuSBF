@@ -32,9 +32,7 @@ class GzStreambuf : public std::streambuf {
     ) {
         auto streambuf = std::unique_ptr<GzStreambuf>(new GzStreambuf(path));
         if (!streambuf->file_) {
-            return cuda::std::unexpected(
-                Error::io(std::format("Failed to open gzip file: {}", path.string()))
-            );
+            return Err(Error::io(std::format("Failed to open gzip file: {}", path.string())));
         }
         return streambuf;
     }
@@ -85,7 +83,7 @@ class GzIstream : public std::istream {
     ) {
         auto streambuf = GzStreambuf::open(path);
         if (!streambuf) {
-            return cuda::std::unexpected(streambuf.error());
+            return Err(streambuf.error());
         }
         return std::unique_ptr<GzIstream>(new GzIstream(std::move(*streambuf)));
     }

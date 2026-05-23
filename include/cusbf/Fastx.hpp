@@ -222,7 +222,7 @@ class FastxReader {
 
         const auto header = readHeaderLine();
         if (!header) {
-            return cuda::std::unexpected(header.error());
+            return Err(header.error());
         }
         if (header->empty()) {
             return false;
@@ -236,7 +236,7 @@ class FastxReader {
             } else if (headerTag == '@') {
                 format_ = FastxFormat::fastq;
             } else {
-                return cuda::std::unexpected(
+                return Err(
                     parseError("expected FASTA or FASTQ header", fastx_column_at(*header, 0))
                 );
             }
@@ -244,7 +244,7 @@ class FastxReader {
 
         const char expectedHeader = format_ == FastxFormat::fasta ? '>' : '@';
         if (headerTag != expectedHeader) {
-            return cuda::std::unexpected(parseError(
+            return Err(parseError(
                 "mixed FASTA and FASTQ records are not supported", fastx_column_at(*header, 0)
             ));
         }
@@ -288,7 +288,7 @@ class FastxReader {
         }
 
         if (input_.bad()) {
-            return cuda::std::unexpected(
+            return Err(
                 Error::io(std::format("Failed to read FASTA/FASTQ input from {}", source_name_))
             );
         }
@@ -307,7 +307,7 @@ class FastxReader {
         }
 
         if (input_.bad()) {
-            return cuda::std::unexpected(
+            return Err(
                 Error::io(std::format("Failed to read FASTA/FASTQ input from {}", source_name_))
             );
         }
@@ -326,11 +326,11 @@ class FastxReader {
         }
 
         if (input_.bad()) {
-            return cuda::std::unexpected(
+            return Err(
                 Error::io(std::format("Failed to read FASTA/FASTQ input from {}", source_name_))
             );
         }
-        return cuda::std::unexpected(parseError(
+        return Err(parseError(
             "unterminated FASTQ record: missing '+' separator",
             fastx_column_at(lineBuffer_, lineBuffer_.size() > 0 ? lineBuffer_.size() - 1 : 0)
         ));
@@ -345,7 +345,7 @@ class FastxReader {
             short_column = fastx_quality_short_column(lineBuffer_);
             qualityLength += lineBuffer_.size();
             if (qualityLength > expectedLength) {
-                return cuda::std::unexpected(parseError(
+                return Err(parseError(
                     "FASTQ quality length exceeds sequence length",
                     fastx_quality_excess_column(qualityLength, expectedLength, lineBuffer_)
                 ));
@@ -356,13 +356,11 @@ class FastxReader {
             return {};
         }
         if (input_.bad()) {
-            return cuda::std::unexpected(
+            return Err(
                 Error::io(std::format("Failed to read FASTA/FASTQ input from {}", source_name_))
             );
         }
-        return cuda::std::unexpected(
-            parseError("FASTQ quality length does not match sequence length", short_column)
-        );
+        return Err(parseError("FASTQ quality length does not match sequence length", short_column));
     }
 };
 
@@ -380,7 +378,7 @@ class FastxReader {
     }
     auto input = std::make_unique<std::ifstream>(path);
     if (!input->is_open()) {
-        return cuda::std::unexpected(
+        return Err(
             Error::io(std::format("Failed to open FASTA/FASTQ file: {}", path.string()))
         );
     }

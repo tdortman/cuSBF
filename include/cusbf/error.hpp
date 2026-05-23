@@ -137,18 +137,37 @@ struct Error {
     }
 };
 
-/// @brief Success/failure result using libcudacxx @c cuda::std::expected.
+/**
+ * @brief Fallible API result: @c cuda::std::expected<T, Error> with cuSBF factories.
+ *
+ * Layout-compatible with the base type. Inherits construction, @c operator*, @c operator->,
+ * @c value, @c error, and conversion from @c cuda::std::unexpected<Error>.
+ */
 template <typename T>
-using Result = cuda::std::expected<T, Error>;
+struct [[nodiscard]] Result : cuda::std::expected<T, Error> {
+    using cuda::std::expected<T, Error>::expected;
 
-/// @brief Checks a CUDA runtime call and returns an error on failure.
-[[nodiscard]] inline Result<void>
-cuda_try(cudaError_t error, std::source_location location = std::source_location::current()) {
-    if (error == cudaSuccess) {
+    [[nodiscard]] static Result ok(T value) {
+        return Result(std::move(value));
+    }
+
+    [[nodiscard]] static Result err(Error error) {
+        return Result(cuda::std::unexpect, std::move(error));
+    }
+};
+
+template <>
+struct [[nodiscard]] Result<void> : cuda::std::expected<void, Error> {
+    using cuda::std::expected<void, Error>::expected;
+
+    [[nodiscard]] static Result ok() {
         return {};
     }
-    return cuda::std::unexpected(Error::cuda(error, location));
-}
+
+    [[nodiscard]] static Result err(Error error) {
+        return Result(cuda::std::unexpect, std::move(error));
+    }
+};
 
 /// @brief Aborts when a @ref Result is unsuccessful (benchmarks and tests).
 inline void require_void(const Result<void>& result) {
@@ -176,41 +195,66 @@ inline void cuda_abort_on_error(
 namespace detail {
 
 template <typename T>
-[[nodiscard]] T try_unwrap_success(Result<T>&& result) {
+[[nodiscard]] T try_unwrap_success(Result<T>& result) {
     return std::move(*result);
 }
 
-inline void try_unwrap_success(Result<void>&& result) {
+inline void try_unwrap_success(Result<void>& result) {
     (void)result;
 }
 
+/// Copies @p error for propagation (avoids moving out of @c expected::error()).
+[[nodiscard]] inline cuda::std::unexpected<Error> propagate_error(const Error& error) {
+    return cuda::std::unexpected<Error>(Error{error});
+}
+
 }  // namespace detail
+
+/// @brief Failure return; converts to any @c Result<T> via @c cuda::std::unexpected.
+[[nodiscard]] inline cuda::std::unexpected<Error> Err(Error error) {
+    return cuda::std::unexpected<Error>(std::move(error));
+}
+
+/// @brief Success return for @c Result<void>; same as @c return {}.
+[[nodiscard]] inline Result<void> Ok() noexcept {
+    return Result<void>::ok();
+}
+
+/// @brief Checks a CUDA runtime call and returns an error on failure.
+[[nodiscard]] inline Result<void>
+cuda_try(cudaError_t error, std::source_location location = std::source_location::current()) {
+    if (error == cudaSuccess) {
+        return Ok();
+    }
+    return Err(Error::cuda(error, location));
+}
 
 }  // namespace cusbf
 
 /// @brief Propagates a @ref cusbf::Result failure from the enclosing function (GNU statement
 /// expression).
 ///
-/// On failure, returns @c cuda::std::unexpected(...) from the caller. On success, yields the value
-/// for valued results, or nothing for @c Result<void>. Usable as a statement (@c CUSBF_TRY(expr);)
-/// or in initializers (@c auto x = CUSBF_TRY(expr);).
-#define CUSBF_TRY(expr)                                                     \
-    ({                                                                      \
-        auto _cusbf_result = (expr);                                        \
-        if (!_cusbf_result) {                                               \
-            return cuda::std::unexpected(std::move(_cusbf_result).error()); \
-        }                                                                   \
-        ::cusbf::detail::try_unwrap_success(std::move(_cusbf_result));      \
+/// On failure, copies the error then returns @c cuda::std::unexpected<Error> (does not move out of
+/// the source @c expected). On success, yields the value for valued results, or nothing for
+/// @c Result<void>. Usable as a statement (@c CUSBF_TRY(expr);) or in initializers
+/// (@c auto x = CUSBF_TRY(expr);).
+#define CUSBF_TRY(expr)                                                              \
+    ({                                                                               \
+        auto _cusbf_result = (expr);                                                 \
+        if (!_cusbf_result) {                                                        \
+            return ::cusbf::detail::propagate_error(_cusbf_result.error());          \
+        }                                                                            \
+        ::cusbf::detail::try_unwrap_success(_cusbf_result);                          \
     })
 
 /// @brief Unwraps a @ref cusbf::Result or throws @c std::runtime_error on failure (tests and apps).
-#define CUSBF_UNWRAP(expr)                                                        \
-    ({                                                                            \
-        auto _cusbf_result = (expr);                                              \
-        if (!_cusbf_result) {                                                     \
-            throw std::runtime_error(std::move(_cusbf_result).error().message()); \
-        }                                                                         \
-        ::cusbf::detail::try_unwrap_success(std::move(_cusbf_result));            \
+#define CUSBF_UNWRAP(expr)                                             \
+    ({                                                                 \
+        auto _cusbf_result = (expr);                                   \
+        if (!_cusbf_result) {                                          \
+            throw std::runtime_error(_cusbf_result.error().message()); \
+        }                                                              \
+        ::cusbf::detail::try_unwrap_success(_cusbf_result);                          \
     })
 
 /// @brief Checks a CUDA call and aborts on failure (destructors and RAII only).

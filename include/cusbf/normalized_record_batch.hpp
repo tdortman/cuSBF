@@ -137,19 +137,17 @@ template <typename Config>
     uint64_t next_offset = 0;
     for (const RecordRange& record : batch.records) {
         if (record.sequenceOffset < next_offset) {
-            return cuda::std::unexpected(
+            return Err(
                 Error::invalid_argument("record batch ranges must be ordered and non-overlapping")
             );
         }
         if (record.sequenceOffset > batch.sequence.size() ||
             record.sequenceBytes > batch.sequence.size() - record.sequenceOffset) {
-            return cuda::std::unexpected(
-                Error::invalid_argument("record batch range exceeds the source sequence")
-            );
+            return Err(Error::invalid_argument("record batch range exceeds the source sequence"));
         }
         if (record.sequenceOffset % Config::symbolWidth != 0 ||
             record.sequenceBytes % Config::symbolWidth != 0) {
-            return cuda::std::unexpected(
+            return Err(
                 Error::invalid_argument(
                     "record batch ranges must align to the configured alphabet symbol width"
                 )

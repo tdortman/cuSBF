@@ -132,8 +132,7 @@ using fastx_dispatch_handler_result_t =
 
 /// @brief Handler invoked by @ref dispatch_fastx_file with either reader type and a dispatch path.
 ///
-/// Must return the same @ref cusbf::Result (or other @c cuda::std::expected with @ref cusbf::Error)
-/// for @ref FastxReader and @ref FastxBufferReader inputs.
+/// Must return the same @ref cusbf::Result for @ref FastxReader and @ref FastxBufferReader inputs.
 template <typename Handler>
 concept fastx_dispatch_handler =
     std::invocable<Handler, FastxReader&, fastx_dispatch_path> &&
@@ -156,8 +155,6 @@ template <typename Config, fastx_dispatch_handler Handler>
     double fill_fraction,
     Handler&& handler
 ) {
-    using result_type = fastx_dispatch_handler_result_t<Handler>;
-
     const std::string path_string = path.string();
     const std::string_view path_view{path_string};
     const fastx_dispatch_path dispatch_path =
@@ -166,7 +163,7 @@ template <typename Config, fastx_dispatch_handler Handler>
     if (fastx_uses_mmap_reader(dispatch_path)) {
         const auto buffer = FastxFileBuffer::load(path);
         if (!buffer) {
-            return result_type(cuda::std::unexpected(buffer.error()));
+            return Err(buffer.error());
         }
         FastxBufferReader reader((*buffer)->data(), path_view);
         return handler(reader, dispatch_path);
@@ -174,7 +171,7 @@ template <typename Config, fastx_dispatch_handler Handler>
 
     const auto input = openFastxFile(path);
     if (!input) {
-        return result_type(cuda::std::unexpected(input.error()));
+        return Err(input.error());
     }
     FastxReader reader(**input, path_view);
     return handler(reader, dispatch_path);

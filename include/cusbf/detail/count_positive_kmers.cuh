@@ -79,9 +79,7 @@ template <typename Config>
         return {};
     }
     if (positive_kmers_out.size() < records.size()) {
-        return cuda::std::unexpected(
-            Error::invalid_argument("positive k-mer output buffer is too small")
-        );
+        return Err(Error::invalid_argument("positive k-mer output buffer is too small"));
     }
 
     const uint32_t block_size = 256;

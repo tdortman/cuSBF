@@ -107,17 +107,13 @@ class FastxFileBuffer {
 #if defined(__linux__)
         const int fd = ::open(path_string.c_str(), O_RDONLY);
         if (fd == -1) {
-            return cuda::std::unexpected(
-                Error::io(std::format("Failed to open FASTA/FASTQ file: {}", path_string))
-            );
+            return Err(Error::io(std::format("Failed to open FASTA/FASTQ file: {}", path_string)));
         }
 
         struct stat file_status{};
         if (::fstat(fd, &file_status) != 0 || file_status.st_size < 0) {
             ::close(fd);
-            return cuda::std::unexpected(
-                Error::io(std::format("Failed to stat FASTA/FASTQ file: {}", path_string))
-            );
+            return Err(Error::io(std::format("Failed to stat FASTA/FASTQ file: {}", path_string)));
         }
 
         if (file_status.st_size == 0) {
@@ -131,9 +127,7 @@ class FastxFileBuffer {
         if (mapped_ == MAP_FAILED) {
             mapped_ = nullptr;
             mapped_size_ = 0;
-            return cuda::std::unexpected(
-                Error::io(std::format("Failed to mmap FASTA/FASTQ file: {}", path_string))
-            );
+            return Err(Error::io(std::format("Failed to mmap FASTA/FASTQ file: {}", path_string)));
         }
 
         data_ = static_cast<const char*>(mapped_);
@@ -143,23 +137,19 @@ class FastxFileBuffer {
 
         std::ifstream input(path_string, std::ios::binary);
         if (!input.is_open()) {
-            return cuda::std::unexpected(
-                Error::io(std::format("Failed to open FASTA/FASTQ file: {}", path_string))
-            );
+            return Err(Error::io(std::format("Failed to open FASTA/FASTQ file: {}", path_string)));
         }
         input.seekg(0, std::ios::end);
         const auto file_size = input.tellg();
         if (file_size < 0) {
-            return cuda::std::unexpected(
-                Error::io(std::format("Failed to size FASTA/FASTQ file: {}", path_string))
-            );
+            return Err(Error::io(std::format("Failed to size FASTA/FASTQ file: {}", path_string)));
         }
         owned_storage_.resize(static_cast<size_t>(file_size));
         input.seekg(0, std::ios::beg);
         if (!owned_storage_.empty()) {
             input.read(owned_storage_.data(), static_cast<std::streamsize>(owned_storage_.size()));
             if (!input) {
-                return cuda::std::unexpected(
+                return Err(
                     Error::io(std::format("Failed to read FASTA/FASTQ file: {}", path_string))
                 );
             }

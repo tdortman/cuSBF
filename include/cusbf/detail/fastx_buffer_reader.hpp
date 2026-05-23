@@ -35,7 +35,7 @@ class FastxBufferReader {
 
         const auto header = readHeaderLine();
         if (!header) {
-            return cuda::std::unexpected(header.error());
+            return Err(header.error());
         }
         if (header->empty()) {
             return false;
@@ -48,7 +48,7 @@ class FastxBufferReader {
             } else if (header_tag == '@') {
                 format_ = FastxFormat::fastq;
             } else {
-                return cuda::std::unexpected(
+                return Err(
                     parseError("expected FASTA or FASTQ header", fastx_column_at(*header, 0))
                 );
             }
@@ -56,7 +56,7 @@ class FastxBufferReader {
 
         const char expected_header = format_ == FastxFormat::fasta ? '>' : '@';
         if (header_tag != expected_header) {
-            return cuda::std::unexpected(parseError(
+            return Err(parseError(
                 "mixed FASTA and FASTQ records are not supported", fastx_column_at(*header, 0)
             ));
         }
@@ -94,7 +94,7 @@ class FastxBufferReader {
 
         const auto header = readHeaderLine();
         if (!header) {
-            return cuda::std::unexpected(header.error());
+            return Err(header.error());
         }
         if (header->empty()) {
             return std::nullopt;
@@ -107,7 +107,7 @@ class FastxBufferReader {
             } else if (header_tag == '@') {
                 format_ = FastxFormat::fastq;
             } else {
-                return cuda::std::unexpected(
+                return Err(
                     parseError("expected FASTA or FASTQ header", fastx_column_at(*header, 0))
                 );
             }
@@ -115,7 +115,7 @@ class FastxBufferReader {
 
         const char expected_header = format_ == FastxFormat::fasta ? '>' : '@';
         if (header_tag != expected_header) {
-            return cuda::std::unexpected(parseError(
+            return Err(parseError(
                 "mixed FASTA and FASTQ records are not supported", fastx_column_at(*header, 0)
             ));
         }
@@ -125,13 +125,13 @@ class FastxBufferReader {
             const uint64_t sequence_offset = static_cast<uint64_t>(position_);
             const std::string_view line = readLine();
             if (line.empty()) {
-                return cuda::std::unexpected(
+                return Err(
                     parseError("FASTA record missing sequence", fastx_column_at(line, 0))
                 );
             }
             if (!line.empty() && line.front() == '>') {
                 pending_header_.assign(line);
-                return cuda::std::unexpected(
+                return Err(
                     parseError("FASTA record missing sequence", fastx_column_at(line, 0))
                 );
             }
@@ -242,7 +242,7 @@ class FastxBufferReader {
             }
             sequence.append(line.data(), line.size());
         }
-        return cuda::std::unexpected(parseError(
+        return Err(parseError(
             "unterminated FASTQ record: missing '+' separator",
             fastx_column_at(last_line, last_line.size() > 0 ? last_line.size() - 1 : 0)
         ));
@@ -256,14 +256,14 @@ class FastxBufferReader {
             last_line = line;
             quality_length += line.size();
             if (quality_length > expected_length) {
-                return cuda::std::unexpected(parseError(
+                return Err(parseError(
                     "FASTQ quality length exceeds sequence length",
                     fastx_quality_excess_column(quality_length, expected_length, line)
                 ));
             }
         }
         if (quality_length != expected_length) {
-            return cuda::std::unexpected(parseError(
+            return Err(parseError(
                 "FASTQ quality length does not match sequence length",
                 fastx_quality_short_column(last_line)
             ));

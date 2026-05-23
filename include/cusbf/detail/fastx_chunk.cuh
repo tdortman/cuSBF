@@ -34,9 +34,7 @@ struct cuda_free_memory {
     size_t total_bytes = 0;
     const cudaError_t error = cudaMemGetInfo(&free_bytes, &total_bytes);
     if (error != cudaSuccess) {
-        return cuda::std::unexpected(
-            Error::io(std::format("cudaMemGetInfo failed: {}", cudaGetErrorString(error)))
-        );
+        return Err(Error::io(std::format("cudaMemGetInfo failed: {}", cudaGetErrorString(error))));
     }
     return cuda_free_memory{free_bytes};
 }
@@ -187,7 +185,7 @@ template <typename Config>
 ) {
     const auto gpu_memory = query_cuda_free_memory();
     if (!gpu_memory) {
-        return cuda::std::unexpected(gpu_memory.error());
+        return Err(gpu_memory.error());
     }
     const size_t staging_budget_bytes =
         fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
@@ -197,7 +195,7 @@ template <typename Config>
         return {};
     }
 
-    return cuda::std::unexpected(
+    return Err(
         Error::resource(
             std::format(
                 "{}: FASTX input requires more GPU memory than available at fill_fraction={} "

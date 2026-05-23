@@ -8,7 +8,6 @@
 #include <string>
 #include <string_view>
 
-#include <cusbf/error.hpp>
 #include <cusbf/filter.cuh>
 
 std::string generateRandomDNA(uint64_t length, uint32_t seed) {
