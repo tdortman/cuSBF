@@ -212,6 +212,18 @@ static void prepareFastxData() {
     g_data = std::move(data);
 }
 
+
+static uint64_t requestedFilterBitsForState(const bm::State& state) {
+    if (benchmark_common::g_fastxFilterBitsOverride != 0) {
+        return benchmark_common::g_fastxFilterBitsOverride;
+    }
+    const int64_t bitsExp = state.range(0);
+    if (bitsExp <= 0) {
+        return benchmark_common::resolveFastxFilterBits(g_data->insert_kmers);
+    }
+    return uint64_t{1} << static_cast<unsigned>(bitsExp);
+}
+
 static uint64_t countDeviceHits(const thrust::device_vector<uint8_t>& hits, uint64_t count) {
     return static_cast<uint64_t>(
         thrust::count(hits.begin(), hits.begin() + static_cast<int64_t>(count), uint8_t{1})
@@ -256,10 +268,10 @@ class CuSbfFprFastxFixture : public bm::Fixture {
     using bm::Fixture::TearDown;
 
    public:
-    void SetUp(const bm::State&) override {
+    void SetUp(const bm::State& state) override {
         prepareFastxData();
 
-        filter_bits = benchmark_common::resolveFastxFilterBits(g_data->insert_kmers);
+        filter_bits = requestedFilterBitsForState(state);
         filter = std::make_unique<cusbf::filter<Config>>(filter_bits);
         filterMemory = filter->filter_bits() / 8;
     }
@@ -300,10 +312,10 @@ class CucoBloomFprFastxFixture : public bm::Fixture {
     using bm::Fixture::TearDown;
 
    public:
-    void SetUp(const bm::State&) override {
+    void SetUp(const bm::State& state) override {
         prepareFastxData();
 
-        filter_bits = benchmark_common::resolveFastxFilterBits(g_data->insert_kmers);
+        filter_bits = requestedFilterBitsForState(state);
         constexpr auto bitsPerBlock =
             CucoBloom::words_per_block * sizeof(typename CucoBloom::word_type) * 8;
         uint64_t blocks = cuda::ceil_div(filter_bits, bitsPerBlock);
@@ -332,10 +344,10 @@ class GqfFprFastxFixture : public bm::Fixture {
     using bm::Fixture::TearDown;
 
    public:
-    void SetUp(const bm::State&) override {
+    void SetUp(const bm::State& state) override {
         prepareFastxData();
 
-        filter_bits = benchmark_common::resolveFastxFilterBits(g_data->insert_kmers);
+        filter_bits = requestedFilterBitsForState(state);
         filter.createForFilterBits(filter_bits);
         filterMemory = filter.filterBytes();
         actualFilterBits = filter.filterBits();
@@ -366,15 +378,23 @@ class TcfFprFastxFixture : public bm::Fixture {
     using bm::Fixture::TearDown;
 
    public:
-    void SetUp(const bm::State&) override {
+    void SetUp(const bm::State& state) override {
         prepareFastxData();
 
-        filter_bits = benchmark_common::resolveFastxFilterBits(g_data->insert_kmers);
+        filter_bits = requestedFilterBitsForState(state);
         filter.createForFilterBits(filter_bits);
         filterMemory = filter.filterBytes();
         actualFilterBits = filter.filterBits();
 
         d_scratchKeys.resize(g_data->insert_kmers);
+
+        const uint64_t reservedGpuBytes = filterMemory + g_data->d_insert.size() +
+                                            g_data->d_insert_packed.size() * sizeof(uint64_t) +
+                                            d_scratchKeys.size() * sizeof(uint64_t);
+        benchmark_common::resolveFastxChunkKmers(
+            g_data->insert_kmers, reservedGpuBytes, benchmark_common::kTcfFastxChunkBytesPerKmer
+        );
+        filter.bindWorkload(g_data->insert_kmers);
     }
 
     void TearDown(const bm::State&) override {
@@ -399,10 +419,10 @@ class SuperBloomCpuFprFastxFixture : public bm::Fixture {
    public:
     static constexpr uint8_t kBlockWindowS = BlockWindowS;
 
-    void SetUp(const bm::State&) override {
+    void SetUp(const bm::State& state) override {
         prepareFastxData();
 
-        filter_bits = benchmark_common::resolveFastxFilterBits(g_data->insert_kmers);
+        filter_bits = requestedFilterBitsForState(state);
 
         const uint64_t targetBits = std::max(filter_bits, uint64_t{1} << 22);
         bitExp_ = static_cast<uint8_t>(cuda::std::bit_width(targetBits) - 1);
@@ -457,10 +477,10 @@ class CuckooGpuFprFastxFixture : public bm::Fixture {
     using bm::Fixture::TearDown;
 
    public:
-    void SetUp(const bm::State&) override {
+    void SetUp(const bm::State& state) override {
         prepareFastxData();
 
-        filter_bits = benchmark_common::resolveFastxFilterBits(g_data->insert_kmers);
+        filter_bits = requestedFilterBitsForState(state);
         const uint64_t capacity = std::max(filter_bits / 16, uint64_t{1});
         filter = std::make_unique<CuckooGpuFilter>(capacity);
         filterMemory = filter->sizeInBytes();

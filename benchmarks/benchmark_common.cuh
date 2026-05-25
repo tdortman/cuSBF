@@ -1560,13 +1560,16 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
         ->Repetitions(5)                \
         ->ReportAggregatesOnly(true)
 
-// Single-point FPR comparison (filter size from g_fastxBitsPerItem × insert k-mers).
+// FPR vs filter size: sweep 2^22 … 2^31 bits (override with --filter-bits).
 #define BENCHMARK_CONFIG_FPR_FASTX  \
     ->Unit(benchmark::kMillisecond) \
         ->UseManualTime()           \
         ->Iterations(1)             \
         ->Repetitions(3)            \
-        ->ReportAggregatesOnly(true)
+        ->ReportAggregatesOnly(true) \
+        ->ArgName("filter_bits_exp") \
+        ->RangeMultiplier(2)         \
+        ->Range(22, 31)
 
 #define REGISTER_BENCHMARK(FixtureName, BenchName) \
     BENCHMARK_REGISTER_F(FixtureName, BenchName)   \
