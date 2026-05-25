@@ -512,10 +512,15 @@ inline uint64_t fastxFilterBitsBudget() {
 
 inline uint64_t fastxBenchKmersAtLoadFactor() {
     const uint64_t bits = fastxFilterBitsBudget();
-    if (bits == 0) {
+    if (bits == 0 || !g_fastxInsertWorkload) {
         return 0;
     }
-    return filter_benchmark::numItemsForTargetMemory(bits / 8, filter_benchmark::kBitsPerTag);
+    return std::min(
+        g_fastxInsertWorkload->insert_kmers,
+        static_cast<uint64_t>(
+            filter_benchmark::numItemsForTargetMemory(bits / 8, filter_benchmark::kBitsPerTag)
+        )
+    );
 }
 
 inline uint64_t fastxBenchSequenceLength(uint64_t benchKmers, uint64_t k = 31) {
@@ -527,7 +532,7 @@ inline uint64_t fastxBenchSequenceLength(uint64_t benchKmers, uint64_t k = 31) {
     return std::min(maxLen, needed);
 }
 
-/// Shared FASTX throughput sizing for filter-comparison (95% target load factor).
+/// Shared FASTX throughput sizing for filter-comparison (target load factor).
 struct FastxThroughputConfig {
     uint64_t genome_kmers = 0;
     uint64_t bench_kmers = 0;

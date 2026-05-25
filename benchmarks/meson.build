@@ -58,20 +58,27 @@ if get_option('param_sweep').enabled()
     endforeach
 endif
 
-# gqf_dep carries -rdc=true link_args for device-linking libgqf; do not add -rdc to benchmark .cu.
+# gqf_dep carries -rdc=true for device-linking libgqf. When that path is active,
+# repeat the CUDA arch list on the final link so nvcc does not emit a default
+# single-arch device-link cubin for Thrust/CUB kernels.
 tcf_benchmark_cuda_args = ['-Xcompiler=-Wno-implicit-fallthrough']
 
 foreach name, config : benchmarks
     extra_cuda_args = config.get('extra_args', [])
+    extra_link_args = []
     deps = config.get('deps', [])
     if tcf_dep in deps
         extra_cuda_args += tcf_benchmark_cuda_args
+    endif
+    if gqf_dep in deps
+        extra_link_args += cuda_arch_args
     endif
     executable(
         name,
         config['src'],
         dependencies: bench_deps + deps,
         cuda_args: cuda_args + extra_cuda_args,
+        link_args: extra_link_args,
         install: false,
     )
 endforeach

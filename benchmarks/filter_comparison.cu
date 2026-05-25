@@ -48,6 +48,29 @@ static void ensureThroughputFastxReady(
     benchmark_common::prepareFastxInsertWorkload<31>(cusbf::DnaAlphabet::separator, gpuPrepare);
 }
 
+static benchmark_common::FastxThroughputConfig throughputConfig() {
+    return benchmark_common::resolveFastxThroughputConfig(31);
+}
+
+static auto packedKmersBenchBegin() {
+    return benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.begin();
+}
+
+static auto packedKmersBenchEnd(uint64_t benchKmers) {
+    return benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.begin() +
+           static_cast<std::ptrdiff_t>(benchKmers);
+}
+
+static const char* benchSequencePtr() {
+    return thrust::raw_pointer_cast(
+        benchmark_common::g_fastxInsertWorkload->d_insert_sequence.data()
+    );
+}
+
+static uint64_t benchSequenceLength() {
+    return throughputConfig().bench_seq_len;
+}
+
 static void setThroughputCounters(
     bm::State& state,
     uint64_t filter_bits,
@@ -67,10 +90,9 @@ struct CucoBloomSetup {
 
     void init() {
         ensureThroughputFastxReady();
-        filter_bits = benchmark_common::resolveFastxFilterBits(
-            benchmark_common::g_fastxInsertWorkload->insert_kmers
-        );
-        numKmers = benchmark_common::g_fastxInsertWorkload->insert_kmers;
+        const auto cfg = throughputConfig();
+        filter_bits = cfg.filter_bits;
+        numKmers = cfg.bench_kmers;
 
         constexpr auto bitsPerBlock =
             CucoBloom::words_per_block * sizeof(typename CucoBloom::word_type) * 8;
@@ -94,10 +116,9 @@ struct CuckooGpuSetup {
 
     void init() {
         ensureThroughputFastxReady();
-        filter_bits = benchmark_common::resolveFastxFilterBits(
-            benchmark_common::g_fastxInsertWorkload->insert_kmers
-        );
-        numKmers = benchmark_common::g_fastxInsertWorkload->insert_kmers;
+        const auto cfg = throughputConfig();
+        filter_bits = cfg.filter_bits;
+        numKmers = cfg.bench_kmers;
 
         const uint64_t capacity = std::max(filter_bits / fb::kBitsPerTag, uint64_t{1});
         filter = std::make_unique<CuckooGpuFilter>(capacity);
@@ -109,17 +130,16 @@ struct GqfSetup {
     uint64_t filter_bits = 0;
     uint64_t numKmers = 0;
     uint64_t filterMemory = 0;
-    thrust::device_vector<uint64_t> queryResults;
     gqf_tcf::GqfHandle handle;
+    thrust::device_vector<uint64_t> queryResults;
 
     void init() {
         ensureThroughputFastxReady();
-        filter_bits = benchmark_common::resolveFastxFilterBits(
-            benchmark_common::g_fastxInsertWorkload->insert_kmers
-        );
-        numKmers = benchmark_common::g_fastxInsertWorkload->insert_kmers;
+        const auto cfg = throughputConfig();
+        filter_bits = cfg.filter_bits;
+        numKmers = cfg.bench_kmers;
 
-        handle.createForFilterBits(filter_bits);
+        handle.createForItems(numKmers);
         filterMemory = handle.filterBytes();
         queryResults.resize(numKmers);
     }
@@ -137,12 +157,11 @@ struct TcfSetup {
 
     void init() {
         ensureThroughputFastxReady(benchmark_common::FastxGpuPrepareKind::SequenceOnDevice);
-        filter_bits = benchmark_common::resolveFastxFilterBits(
-            benchmark_common::g_fastxInsertWorkload->insert_kmers
-        );
-        numKmers = benchmark_common::g_fastxInsertWorkload->insert_kmers;
+        const auto cfg = throughputConfig();
+        filter_bits = cfg.filter_bits;
+        numKmers = cfg.bench_kmers;
 
-        handle.createForFilterBits(filter_bits);
+        handle.createForItems(numKmers);
         const uint64_t reservedGpuBytes =
             handle.filterBytes() + benchmark_common::fastxInsertSequenceDeviceBytes();
         benchmark_common::resolveFastxChunkKmers(
@@ -237,10 +256,9 @@ class CuSbfFixture : public bm::Fixture {
    public:
     void SetUp(const bm::State&) override {
         ensureThroughputFastxReady();
-        filter_bits = benchmark_common::resolveFastxFilterBits(
-            benchmark_common::g_fastxInsertWorkload->insert_kmers
-        );
-        numKmers = benchmark_common::g_fastxInsertWorkload->insert_kmers;
+        const auto cfg = throughputConfig();
+        filter_bits = cfg.filter_bits;
+        numKmers = cfg.bench_kmers;
         filter = std::make_unique<cusbf::filter<CuSbfThroughputConfig>>(filter_bits);
         filterMemory = filter->filter_bits() / 8;
         queryOutput.resize(numKmers);
@@ -267,29 +285,24 @@ BENCHMARK_DEFINE_F(CucoBloomFixture, Insert)(bm::State& state) {
         (void)s.filter->clear();
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
         fix.timer.start();
-        s.filter->add(
-            benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.begin(),
-            benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.end()
-        );
+        s.filter->add(packedKmersBenchBegin(), packedKmersBenchEnd(s.numKmers));
         state.SetIterationTime(fix.timer.elapsed());
     }
     setThroughputCounters(state, s.filter_bits, s.filterMemory, s.numKmers);
 }
 
+
 BENCHMARK_DEFINE_F(CucoBloomFixture, Query)(bm::State& state) {
     auto& fix = *static_cast<CucoBloomFixture*>(this);
     auto& s = fix.setup;
     (void)s.filter->clear();
-    s.filter->add(
-        benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.begin(),
-        benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.end()
-    );
+    s.filter->add(packedKmersBenchBegin(), packedKmersBenchEnd(s.numKmers));
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     for (auto _ : state) {
         fix.timer.start();
         s.filter->contains(
-            benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.begin(),
-            benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.end(),
+            packedKmersBenchBegin(),
+            packedKmersBenchEnd(s.numKmers),
             reinterpret_cast<bool*>(thrust::raw_pointer_cast(s.output.data()))
         );
         state.SetIterationTime(fix.timer.elapsed());
@@ -301,11 +314,14 @@ BENCHMARK_DEFINE_F(CucoBloomFixture, Query)(bm::State& state) {
 BENCHMARK_DEFINE_F(CuckooGpuFixture, Insert)(bm::State& state) {
     auto& fix = *static_cast<CuckooGpuFixture*>(this);
     auto& s = fix.setup;
+    uint64_t* const keys = thrust::raw_pointer_cast(
+        benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.data()
+    );
     for (auto _ : state) {
         (void)s.filter->clear();
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
         fix.timer.start();
-        s.filter->insertMany(benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers);
+        s.filter->insertMany(keys, s.numKmers);
         state.SetIterationTime(fix.timer.elapsed());
     }
     setThroughputCounters(state, s.filter_bits, s.filterMemory, s.numKmers);
@@ -314,15 +330,16 @@ BENCHMARK_DEFINE_F(CuckooGpuFixture, Insert)(bm::State& state) {
 BENCHMARK_DEFINE_F(CuckooGpuFixture, Query)(bm::State& state) {
     auto& fix = *static_cast<CuckooGpuFixture*>(this);
     auto& s = fix.setup;
-    thrust::device_vector<uint8_t> queryOutput(s.numKmers);
+    thrust::device_vector<bool> queryOutput(s.numKmers);
+    uint64_t* const keys = thrust::raw_pointer_cast(
+        benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.data()
+    );
     (void)s.filter->clear();
-    s.filter->insertMany(benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers);
+    s.filter->insertMany(keys, s.numKmers);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     for (auto _ : state) {
         fix.timer.start();
-        s.filter->containsMany(
-            benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers, queryOutput
-        );
+        s.filter->containsMany(keys, s.numKmers, thrust::raw_pointer_cast(queryOutput.data()));
         state.SetIterationTime(fix.timer.elapsed());
         bm::DoNotOptimize(thrust::raw_pointer_cast(queryOutput.data()));
     }
@@ -352,22 +369,17 @@ BENCHMARK_DEFINE_F(GqfFixture, Insert)(bm::State& state) {
 BENCHMARK_DEFINE_F(GqfFixture, Query)(bm::State& state) {
     auto& fix = *static_cast<GqfFixture*>(this);
     auto& s = fix.setup;
-    gqf_tcf::gqfBulkInsert(
-        s.handle,
-        thrust::raw_pointer_cast(
-            benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.data()
-        ),
-        s.numKmers
+    auto* const keys = thrust::raw_pointer_cast(
+        benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.data()
     );
+    gqf_tcf::gqfBulkInsert(s.handle, keys, s.numKmers);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     for (auto _ : state) {
         fix.timer.start();
         gqf_tcf::gqfBulkGet(
             s.handle,
             s.numKmers,
-            thrust::raw_pointer_cast(
-                benchmark_common::g_fastxInsertWorkload->d_insert_packed_kmers.data()
-            ),
+            keys,
             thrust::raw_pointer_cast(s.queryResults.data())
         );
         state.SetIterationTime(fix.timer.elapsed());
@@ -379,10 +391,8 @@ BENCHMARK_DEFINE_F(GqfFixture, Query)(bm::State& state) {
 BENCHMARK_DEFINE_F(TcfFixture, Insert)(bm::State& state) {
     auto& fix = *static_cast<TcfFixture*>(this);
     auto& s = fix.setup;
-    const char* const d_sequence =
-        thrust::raw_pointer_cast(benchmark_common::g_fastxInsertWorkload->d_insert_sequence.data());
-    const uint64_t sequenceLength =
-        benchmark_common::g_fastxInsertWorkload->d_insert_sequence.size();
+    const char* const d_sequence = benchSequencePtr();
+    const uint64_t sequenceLength = benchSequenceLength();
     for (auto _ : state) {
         s.destroy();
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
@@ -399,10 +409,8 @@ BENCHMARK_DEFINE_F(TcfFixture, Insert)(bm::State& state) {
 BENCHMARK_DEFINE_F(TcfFixture, Query)(bm::State& state) {
     auto& fix = *static_cast<TcfFixture*>(this);
     auto& s = fix.setup;
-    const char* const d_sequence =
-        thrust::raw_pointer_cast(benchmark_common::g_fastxInsertWorkload->d_insert_sequence.data());
-    const uint64_t sequenceLength =
-        benchmark_common::g_fastxInsertWorkload->d_insert_sequence.size();
+    const char* const d_sequence = benchSequencePtr();
+    const uint64_t sequenceLength = benchSequenceLength();
     s.handle.refreshOpKeysAllChunksFromSequence(d_sequence, sequenceLength);
     s.handle.bulkInsertAllChunks();
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
@@ -418,10 +426,7 @@ BENCHMARK_DEFINE_F(TcfFixture, Query)(bm::State& state) {
 
 BENCHMARK_DEFINE_F(CuSbfFixture, Insert)(bm::State& state) {
     auto& fix = *static_cast<CuSbfFixture*>(this);
-    const cusbf::device_span<const char> insertSpan{
-        thrust::raw_pointer_cast(benchmark_common::g_fastxInsertWorkload->d_insert_sequence.data()),
-        benchmark_common::g_fastxInsertWorkload->d_insert_sequence.size(),
-    };
+    const cusbf::device_span<const char> insertSpan{benchSequencePtr(), benchSequenceLength()};
     for (auto _ : state) {
         CUSBF_UNWRAP(fix.filter->clear());
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
@@ -435,10 +440,7 @@ BENCHMARK_DEFINE_F(CuSbfFixture, Insert)(bm::State& state) {
 
 BENCHMARK_DEFINE_F(CuSbfFixture, Query)(bm::State& state) {
     auto& fix = *static_cast<CuSbfFixture*>(this);
-    const cusbf::device_span<const char> insertSpan{
-        thrust::raw_pointer_cast(benchmark_common::g_fastxInsertWorkload->d_insert_sequence.data()),
-        benchmark_common::g_fastxInsertWorkload->d_insert_sequence.size(),
-    };
+    const cusbf::device_span<const char> insertSpan{benchSequencePtr(), benchSequenceLength()};
     CUSBF_UNWRAP(fix.filter->clear());
     benchmark::DoNotOptimize(fix.filter->insert_sequence_async(insertSpan));
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());

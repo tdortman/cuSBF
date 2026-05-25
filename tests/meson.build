@@ -1,5 +1,6 @@
 gtest_dep = subproject('gtest').get_variable('gtest_dep')
 gtest_main_dep = subproject('gtest').get_variable('gtest_main_dep')
+benchmark_dep = subproject('google-benchmark').get_variable('google_benchmark_dep')
 
 test_exe = executable(
     'test-cusbf',
@@ -10,8 +11,9 @@ test_exe = executable(
         'test_fastx_dispatch.cpp',
         'test_fastx_host_limits.cpp',
         'test_normalized_record_batch.cpp',
+        'test_benchmark_common.cu',
     ],
-    dependencies: [cusbf_dep, gtest_dep, gtest_main_dep],
+    dependencies: [cusbf_dep, benchmark_dep, gtest_dep, gtest_main_dep],
     cuda_args: cuda_args,
     install: false,
 )
