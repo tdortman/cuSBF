@@ -48,6 +48,7 @@ OPERATION_MARKERS = {
 X_AXIS_LABEL = "Target Filter Capacity [k-mers]"
 SOL_MARKER_SIZE = pu.MARKER_SIZE - 3
 SOL_LEGEND_MARKER_SIZE = pu.MARKER_SIZE - 2
+Y_AXIS_TICKS = [0, 25, 50, 75, 100]
 
 
 def _filter_legend_handles(filters: list[str]) -> list:
@@ -194,6 +195,7 @@ def _plot_unified(df, output_dir: Path) -> None:
         ax.set_title(metric_name, fontweight="bold", pad=4)
         ax.set_xscale("log", base=2)
         ax.set_ylim(0, 105)
+        ax.set_yticks(Y_AXIS_TICKS)
         ax.grid(True, which="both", ls="--", alpha=pu.GRID_ALPHA)
 
     for ax in axes[0]:
@@ -256,6 +258,7 @@ def _plot_per_metric_comparison(df, output_dir: Path) -> None:
             )
             ax.set_xscale("log", base=2)
             ax.set_ylim(0, 105)
+            ax.set_yticks(Y_AXIS_TICKS)
             ax.grid(True, which="both", ls="--", alpha=pu.GRID_ALPHA)
             ax.legend(
                 fontsize=pu.LEGEND_FONT_SIZE,
