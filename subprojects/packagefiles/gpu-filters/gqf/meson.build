@@ -5,7 +5,8 @@ base_cuda_args = [
     '--expt-relaxed-constexpr',
     '--generate-line-info',
     '-gencode=arch=compute_120,code=sm_120',
-    '-gencode=arch=compute_75,code=compute_75',
+    '-gencode=arch=compute_90,code=sm_90',
+    '-gencode=arch=compute_80,code=sm_80',
     '-rdc=true',
     # Upstream gpu-filters/gqf is noisy: we only consume the built library.
     '-w',
