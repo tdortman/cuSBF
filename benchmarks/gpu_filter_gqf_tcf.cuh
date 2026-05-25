@@ -74,20 +74,37 @@ inline uint64_t gqfMinCapacityForItems(uint64_t numItems) {
     return static_cast<uint64_t>(std::ceil(static_cast<double>(numItems) / kLoadFactor));
 }
 
+inline uint64_t gqfMinFilterBitsForItems(uint64_t numItems) {
+    return gqfCapacity(gqfExponent(std::max(gqfMinCapacityForItems(numItems), uint64_t{1})))
+           * static_cast<uint64_t>(QF_BITS_PER_SLOT);
+}
+
 inline uint64_t gqfCapacityForFilterBits(uint64_t filterBits) {
     const uint64_t minCapacity =
         cuda::ceil_div(std::max(filterBits, uint64_t{1}), static_cast<uint64_t>(QF_BITS_PER_SLOT));
     return 1ULL << gqfExponent(minCapacity);
 }
 
+inline bool gqfSupportsItemsForFilterBits(uint64_t filterBits, uint64_t numItems) {
+    return gqfCapacityForFilterBits(filterBits) >= std::max(gqfMinCapacityForItems(numItems), uint64_t{1});
+}
+
 inline uint64_t tcfCapacityForItems(uint64_t numItems) {
     return static_cast<uint64_t>(std::ceil(static_cast<double>(numItems) / kLoadFactor));
+}
+
+inline uint64_t tcfMinFilterBitsForItems(uint64_t numItems) {
+    return tcfCapacityForItems(numItems) * static_cast<uint64_t>(sizeof(uint16_t) * 8);
 }
 
 inline uint64_t tcfCapacityForFilterBits(uint64_t filterBits) {
     return cuda::ceil_div(
         std::max(filterBits, uint64_t{1}), static_cast<uint64_t>(sizeof(uint16_t) * 8)
     );
+}
+
+inline bool tcfSupportsItemsForFilterBits(uint64_t filterBits, uint64_t numItems) {
+    return tcfCapacityForFilterBits(filterBits) >= std::max(tcfCapacityForItems(numItems), uint64_t{1});
 }
 
 struct GqfHandle {
