@@ -38,7 +38,7 @@ using CuckooGpuFilter = cuckoogpu::Filter<CuckooGpuConfig>;
 
 using CuSbfThroughputConfig = cusbf::Config<31, 28, 16, 4, 256>;
 using SuperBloomCpuThroughputConfig = cusbf::Config<31, 28, 16, 4>;
-using SuperBloomCpuFastxFixture =
+using SuperBloomFixture =
     benchmark_common::SuperBloomCpuFastxFixture<SuperBloomCpuThroughputConfig>;
 
 static void ensureThroughputFastxReady() {
@@ -443,8 +443,8 @@ REGISTER_BENCHMARK_THROUGHPUT_FASTX(TcfFixture, Query);
 REGISTER_BENCHMARK_THROUGHPUT_FASTX(CuSbfFixture, Insert);
 REGISTER_BENCHMARK_THROUGHPUT_FASTX(CuSbfFixture, Query);
 
-BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_ALL(SuperBloomCpuFastxFixture);
-BENCHMARK_REGISTER_SUPERBLOOM_CPU_FASTX_ALL(SuperBloomCpuFastxFixture);
+BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_ALL(SuperBloomFixture);
+BENCHMARK_REGISTER_SUPERBLOOM_CPU_FASTX_ALL(SuperBloomFixture);
 
 int main(int argc, char** argv) {
     auto cli = benchmark_common::parseFastxBenchmarkCli(argc, argv);

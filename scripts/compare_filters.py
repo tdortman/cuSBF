@@ -58,7 +58,7 @@ def normalize_filter_key(fixture_base: str) -> str:
         return "tcf"
     if key.startswith("cusbf"):
         return "cusbf"
-    if key.startswith("superbloomcpufastx") or key.startswith("superbloomcpu"):
+    if key.startswith("superbloom"):
         return "superbloom_cpu"
     return key
 
