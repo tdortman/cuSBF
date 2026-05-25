@@ -378,9 +378,7 @@ class FastxReader {
     }
     auto input = std::make_unique<std::ifstream>(path);
     if (!input->is_open()) {
-        return Err(
-            Error::io(std::format("Failed to open FASTA/FASTQ file: {}", path.string()))
-        );
+        return Err(Error::io(std::format("Failed to open FASTA/FASTQ file: {}", path.string())));
     }
     return input;
 }

@@ -6,9 +6,9 @@
 #include <thrust/count.h>
 #include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>
-#include <cuda/std/functional>
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
+#include <cuda/std/functional>
 
 #include <algorithm>
 #include <cmath>
@@ -39,10 +39,9 @@ inline size_t gqfFilterBytes(const QF* devQf) {
 
 inline void convertGqfResults(thrust::device_vector<uint64_t>& results) {
     thrust::transform(
-        results.begin(),
-        results.end(),
-        results.begin(),
-        [] __device__(uint64_t value) { return value > 0 ? 1ULL : 0ULL; }
+        results.begin(), results.end(), results.begin(), [] __device__(uint64_t value) {
+            return value > 0 ? 1ULL : 0ULL;
+        }
     );
 }
 
@@ -62,10 +61,8 @@ inline uint64_t gqfMinCapacityForItems(uint64_t numItems) {
 }
 
 inline uint64_t gqfCapacityForFilterBits(uint64_t filterBits) {
-    const uint64_t minCapacity = cuda::ceil_div(
-        std::max(filterBits, uint64_t{1}),
-        static_cast<uint64_t>(QF_BITS_PER_SLOT)
-    );
+    const uint64_t minCapacity =
+        cuda::ceil_div(std::max(filterBits, uint64_t{1}), static_cast<uint64_t>(QF_BITS_PER_SLOT));
     return 1ULL << gqfExponent(minCapacity);
 }
 
@@ -75,8 +72,7 @@ inline uint64_t tcfCapacityForItems(uint64_t numItems) {
 
 inline uint64_t tcfCapacityForFilterBits(uint64_t filterBits) {
     return cuda::ceil_div(
-        std::max(filterBits, uint64_t{1}),
-        static_cast<uint64_t>(sizeof(uint16_t) * 8)
+        std::max(filterBits, uint64_t{1}), static_cast<uint64_t>(sizeof(uint16_t) * 8)
     );
 }
 
@@ -103,8 +99,7 @@ struct GqfHandle {
 
     void createForFilterBits(uint64_t filterBits) {
         const uint64_t minCapacity = cuda::ceil_div(
-            std::max(filterBits, uint64_t{1}),
-            static_cast<uint64_t>(QF_BITS_PER_SLOT)
+            std::max(filterBits, uint64_t{1}), static_cast<uint64_t>(QF_BITS_PER_SLOT)
         );
         createForCapacity(minCapacity);
     }
@@ -207,12 +202,7 @@ inline void gqfBulkInsert(GqfHandle& handle, uint64_t* keys, uint64_t count) {
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
 
-inline void gqfBulkGet(
-    GqfHandle& handle,
-    uint64_t count,
-    uint64_t* keys,
-    uint64_t* results
-) {
+inline void gqfBulkGet(GqfHandle& handle, uint64_t count, uint64_t* keys, uint64_t* results) {
     bulk_get(handle.filter, count, keys, results);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }

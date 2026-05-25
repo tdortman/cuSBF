@@ -28,8 +28,8 @@
 
 #include <cuda/std/bit>
 
-#include <cusbf/filter.cuh>
 #include <cusbf/device_span.cuh>
+#include <cusbf/filter.cuh>
 #include <cusbf/helpers.cuh>
 #include <cusbf/superbloom_ffi.hpp>
 
@@ -294,11 +294,8 @@ inline void setCommonCounters(
     state.counters["false_positives"] = 0.0;
 }
 
-inline void setFprCounters(
-    benchmark::State& state,
-    uint64_t falsePositives,
-    uint64_t fprDenominator
-) {
+inline void
+setFprCounters(benchmark::State& state, uint64_t falsePositives, uint64_t fprDenominator) {
     state.counters["false_positives"] = benchmark::Counter(static_cast<double>(falsePositives));
     state.counters["fpr_percentage"] = benchmark::Counter(
         100.0 * static_cast<double>(falsePositives) / static_cast<double>(fprDenominator)
@@ -343,19 +340,15 @@ void generateKeysGpuRange(
     );
 }
 
-inline void setFilterBenchmarkCounters(
-    benchmark::State& state,
-    uint64_t memoryBytes,
-    uint64_t numItems
-) {
+inline void
+setFilterBenchmarkCounters(benchmark::State& state, uint64_t memoryBytes, uint64_t numItems) {
     // Each item is one k-mer; items_per_second in CSV is k-mers/s (divide by 1e9 for GKmer/s).
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * numItems));
     state.counters["memory_bytes"] = benchmark::Counter(
         static_cast<double>(memoryBytes), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024
     );
-    state.counters["bits_per_item"] = benchmark::Counter(
-        static_cast<double>(memoryBytes * 8) / static_cast<double>(numItems)
-    );
+    state.counters["bits_per_item"] =
+        benchmark::Counter(static_cast<double>(memoryBytes * 8) / static_cast<double>(numItems));
     state.counters["num_items"] = benchmark::Counter(static_cast<double>(numItems));
     state.counters["num_kmers"] = benchmark::Counter(static_cast<double>(numItems));
     state.counters["fpr_percentage"] = 0.0;
@@ -529,9 +522,7 @@ inline void ensureFastxCpuInsertFasta(const char* prefix = "bloom-filter-compari
         return;
     }
     workload.cpu_insert_fastx_path = writeGeneratedFastaFromSequence(
-        workload.host_insert_sequence,
-        effectiveFastxCpuNumRecords(),
-        prefix
+        workload.host_insert_sequence, effectiveFastxCpuNumRecords(), prefix
     );
 }
 
@@ -685,8 +676,7 @@ class CuSbfFixtureBase : public benchmark::Fixture {
     void setupCommon(const benchmark::State& state) {
         targetMemoryBytes = static_cast<uint64_t>(state.range(0));
         numItems = filter_benchmark::numItemsForTargetMemory(
-            targetMemoryBytes,
-            filter_benchmark::kBitsPerTag
+            targetMemoryBytes, filter_benchmark::kBitsPerTag
         );
 
         const uint64_t requestedFilterBits =
@@ -709,14 +699,10 @@ class CuSbfFixtureBase : public benchmark::Fixture {
             d_insertSequence.resize(insertSequenceLength);
             d_fprQuerySequence.resize(fprQuerySequenceLength);
             gpuGenerateProtein(
-                d_insertSequence,
-                insertSequenceLength,
-                filter_benchmark::kInsertSequenceSeed
+                d_insertSequence, insertSequenceLength, filter_benchmark::kInsertSequenceSeed
             );
             gpuGenerateProtein(
-                d_fprQuerySequence,
-                fprQuerySequenceLength,
-                filter_benchmark::kFprQuerySequenceSeed
+                d_fprQuerySequence, fprQuerySequenceLength, filter_benchmark::kFprQuerySequenceSeed
             );
             CUSBF_CUDA_CALL(cudaDeviceSynchronize());
         } else {
@@ -859,11 +845,7 @@ void runCuSbfFpr(Fixture& fixture, benchmark::State& state) {
     );
     fixture.setCounters(state);
     filter_benchmark::setFilterFprCounters(
-        state,
-        fixture.filterMemory,
-        fixture.numItems,
-        falsePositives,
-        fixture.fprQueryKmers
+        state, fixture.filterMemory, fixture.numItems, falsePositives, fixture.fprQueryKmers
     );
 }
 
@@ -1011,18 +993,18 @@ void runSuperBloomCpuFastxQuery(Fixture& fixture, benchmark::State& state) {
     fixture.setCounters(state);
 }
 
-#define BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_INSERT(FixtureName) \
+#define BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_INSERT(FixtureName)       \
     BENCHMARK_DEFINE_F(FixtureName, Insert)(benchmark::State & state) { \
-        benchmark_common::runSuperBloomCpuFastxInsert(*this, state); \
+        benchmark_common::runSuperBloomCpuFastxInsert(*this, state);    \
     };
 
-#define BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_QUERY(FixtureName) \
+#define BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_QUERY(FixtureName)       \
     BENCHMARK_DEFINE_F(FixtureName, Query)(benchmark::State & state) { \
-        benchmark_common::runSuperBloomCpuFastxQuery(*this, state); \
+        benchmark_common::runSuperBloomCpuFastxQuery(*this, state);    \
     };
 
 #define BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_ALL(FixtureName) \
-    BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_INSERT(FixtureName);   \
+    BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_INSERT(FixtureName); \
     BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_QUERY(FixtureName)
 
 #define BENCHMARK_REGISTER_SUPERBLOOM_CPU_FASTX_ALL(FixtureName) \
@@ -1066,8 +1048,7 @@ class SuperBloomCpuFixture : public benchmark::Fixture {
     }
 
     void TearDown(const benchmark::State&) override {
-        if (handle_)
-            superbloom_destroy(handle_);
+        if (handle_) superbloom_destroy(handle_);
         handle_ = nullptr;
         benchData = nullptr;
         h_output.clear();
@@ -1093,8 +1074,7 @@ class SuperBloomCpuFixture : public benchmark::Fixture {
     }
 
     void ensureHostSequence() {
-        if (!h_sequence.empty() || sequenceLength == 0)
-            return;
+        if (!h_sequence.empty() || sequenceLength == 0) return;
         h_sequence.resize(sequenceLength);
         CUSBF_CUDA_CALL(cudaMemcpy(
             h_sequence.data(),
@@ -1335,8 +1315,7 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
 }  // namespace benchmark_common
 
 #define BENCHMARK_CUSBF_CONFIG_SYMBOL(K, S, M, H) CuSBF_K##K##_S##S##_M##M##_H##H##_Config
-#define BENCHMARK_CUSBF_FIXTURE_SYMBOL(K, S, M, H) \
-    CuSBF_K##K##_S##S##_M##M##_H##H##_Fixture
+#define BENCHMARK_CUSBF_FIXTURE_SYMBOL(K, S, M, H) CuSBF_K##K##_S##S##_M##M##_H##H##_Fixture
 #define BENCHMARK_SUPERBLOOM_CPU_FIXTURE_SYMBOL(K, S, M, H) \
     SuperBloomCpu_K##K##_S##S##_M##M##_H##H##_Fixture
 
@@ -1345,20 +1324,20 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
     using BENCHMARK_CUSBF_FIXTURE_SYMBOL(K, S, M, H) =                                \
         benchmark_common::CuSbfConfigFixture<BENCHMARK_CUSBF_CONFIG_SYMBOL(K, S, M, H)>;
 
-#define BENCHMARK_DEFINE_CUSBF_ALL(FixtureName)                    \
+#define BENCHMARK_DEFINE_CUSBF_ALL(FixtureName)                         \
     BENCHMARK_DEFINE_F(FixtureName, Insert)(benchmark::State & state) { \
-        benchmark_common::runCuSbfInsert(*this, state);            \
+        benchmark_common::runCuSbfInsert(*this, state);                 \
     }                                                                   \
     BENCHMARK_DEFINE_F(FixtureName, Query)(benchmark::State & state) {  \
-        benchmark_common::runCuSbfQuery(*this, state);             \
+        benchmark_common::runCuSbfQuery(*this, state);                  \
     }                                                                   \
     BENCHMARK_DEFINE_F(FixtureName, FPR)(benchmark::State & state) {    \
-        benchmark_common::runCuSbfFpr(*this, state);               \
+        benchmark_common::runCuSbfFpr(*this, state);                    \
     }
 
-#define BENCHMARK_DEFINE_CUSBF_FPR_ONLY(FixtureName)            \
+#define BENCHMARK_DEFINE_CUSBF_FPR_ONLY(FixtureName)                 \
     BENCHMARK_DEFINE_F(FixtureName, FPR)(benchmark::State & state) { \
-        benchmark_common::runCuSbfFpr(*this, state);            \
+        benchmark_common::runCuSbfFpr(*this, state);                 \
     }
 
 #define BENCHMARK_DEFINE_SUPERBLOOM_CPU_ALL(FixtureName)                \
@@ -1378,8 +1357,8 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
     }
 
 #define BENCHMARK_REGISTER_CUSBF_ALL(FixtureName) \
-    REGISTER_BENCHMARK(FixtureName, Insert);           \
-    REGISTER_BENCHMARK(FixtureName, Query);            \
+    REGISTER_BENCHMARK(FixtureName, Insert);      \
+    REGISTER_BENCHMARK(FixtureName, Query);       \
     REGISTER_BENCHMARK(FixtureName, FPR);
 
 #define BENCHMARK_REGISTER_CUSBF_FPR_ONLY(FixtureName) REGISTER_BENCHMARK(FixtureName, FPR);
@@ -1402,11 +1381,11 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
         ->ReportAggregatesOnly(true)
 
 // Single-point FPR comparison (filter size from g_fastxBitsPerItem × insert k-mers).
-#define BENCHMARK_CONFIG_FPR_FASTX \
+#define BENCHMARK_CONFIG_FPR_FASTX  \
     ->Unit(benchmark::kMillisecond) \
-        ->UseManualTime()            \
-        ->Iterations(1)              \
-        ->Repetitions(3)             \
+        ->UseManualTime()           \
+        ->Iterations(1)             \
+        ->Repetitions(3)            \
         ->ReportAggregatesOnly(true)
 
 #define REGISTER_BENCHMARK(FixtureName, BenchName) \
@@ -1419,14 +1398,14 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
 
 // Single-point throughput comparison from one FASTX insert file (g_fastxBitsPerItem).
 #define BENCHMARK_CONFIG_THROUGHPUT_FASTX \
-    ->Unit(benchmark::kMillisecond)      \
-        ->UseManualTime()                \
-        ->Iterations(10)                 \
-        ->Repetitions(5)                 \
+    ->Unit(benchmark::kMillisecond)       \
+        ->UseManualTime()                 \
+        ->Iterations(10)                  \
+        ->Repetitions(5)                  \
         ->ReportAggregatesOnly(true)
 
 #define REGISTER_BENCHMARK_THROUGHPUT_FASTX(FixtureName, BenchName) \
-    BENCHMARK_REGISTER_F(FixtureName, BenchName)                      \
+    BENCHMARK_REGISTER_F(FixtureName, BenchName)                    \
     BENCHMARK_CONFIG_THROUGHPUT_FASTX
 
 #define STANDARD_BENCHMARK_MAIN()                                   \

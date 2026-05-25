@@ -125,15 +125,11 @@ class FastxBufferReader {
             const uint64_t sequence_offset = static_cast<uint64_t>(position_);
             const std::string_view line = readLine();
             if (line.empty()) {
-                return Err(
-                    parseError("FASTA record missing sequence", fastx_column_at(line, 0))
-                );
+                return Err(parseError("FASTA record missing sequence", fastx_column_at(line, 0)));
             }
             if (!line.empty() && line.front() == '>') {
                 pending_header_.assign(line);
-                return Err(
-                    parseError("FASTA record missing sequence", fastx_column_at(line, 0))
-                );
+                return Err(parseError("FASTA record missing sequence", fastx_column_at(line, 0)));
             }
 
             if (position_ < data_.size() && data_[position_] != '>') {

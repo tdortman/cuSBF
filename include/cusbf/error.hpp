@@ -238,13 +238,13 @@ cuda_try(cudaError_t error, std::source_location location = std::source_location
 /// the source @c expected). On success, yields the value for valued results, or nothing for
 /// @c Result<void>. Usable as a statement (@c CUSBF_TRY(expr);) or in initializers
 /// (@c auto x = CUSBF_TRY(expr);).
-#define CUSBF_TRY(expr)                                                              \
-    ({                                                                               \
-        auto _cusbf_result = (expr);                                                 \
-        if (!_cusbf_result) {                                                        \
-            return ::cusbf::detail::propagate_error(_cusbf_result.error());          \
-        }                                                                            \
-        ::cusbf::detail::try_unwrap_success(_cusbf_result);                          \
+#define CUSBF_TRY(expr)                                                     \
+    ({                                                                      \
+        auto _cusbf_result = (expr);                                        \
+        if (!_cusbf_result) {                                               \
+            return ::cusbf::detail::propagate_error(_cusbf_result.error()); \
+        }                                                                   \
+        ::cusbf::detail::try_unwrap_success(_cusbf_result);                 \
     })
 
 /// @brief Unwraps a @ref cusbf::Result or throws @c std::runtime_error on failure (tests and apps).
@@ -254,7 +254,7 @@ cuda_try(cudaError_t error, std::source_location location = std::source_location
         if (!_cusbf_result) {                                          \
             throw std::runtime_error(_cusbf_result.error().message()); \
         }                                                              \
-        ::cusbf::detail::try_unwrap_success(_cusbf_result);                          \
+        ::cusbf::detail::try_unwrap_success(_cusbf_result);            \
     })
 
 /// @brief Checks a CUDA call and aborts on failure (destructors and RAII only).
