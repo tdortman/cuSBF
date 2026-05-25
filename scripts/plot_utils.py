@@ -150,9 +150,16 @@ def load_csv(csv_path: Path) -> pd.DataFrame:
     """
 
     try:
+        # Benchmark CSVs may include extra user counters (e.g. SuperBloom "s")
+        # beyond the header columns; read only declared columns.
         if csv_path == "-":
-            return pd.read_csv(sys.stdin)
-        return pd.read_csv(csv_path)
+            data = sys.stdin.read()
+            buffer = io.StringIO(data)
+            header_df = pd.read_csv(buffer, nrows=0)
+            buffer.seek(0)
+            return pd.read_csv(buffer, usecols=list(header_df.columns))
+        header_df = pd.read_csv(csv_path, nrows=0)
+        return pd.read_csv(csv_path, usecols=list(header_df.columns))
     except Exception as e:
         typer.secho(f"Error reading CSV {csv_path}: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
