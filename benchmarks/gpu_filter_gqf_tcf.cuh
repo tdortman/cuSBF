@@ -221,6 +221,39 @@ struct TcfHandle {
         );
     }
 
+
+    // TCF mutates keys in-place; copy into opKeys before each bulk op.
+    void refreshOpKeysFromPacked(uint64_t* keys, uint64_t count) {
+        if (opKeys.size() < count) {
+            bindWorkload(count);
+        }
+        CUSBF_CUDA_CALL(cudaMemcpy(
+            thrust::raw_pointer_cast(opKeys.data()),
+            keys,
+            count * sizeof(uint64_t),
+            cudaMemcpyDeviceToDevice
+        ));
+    }
+
+    void bulkInsert(uint64_t* keys, uint64_t count) {
+        refreshOpKeysFromPacked(keys, count);
+        bulkInsertPrepared(count);
+    }
+
+    void bulkQueryInto(uint64_t* keys, uint64_t count, bool* outHits) {
+        refreshOpKeysFromPacked(keys, count);
+        filter->bulk_query_into(
+            thrust::raw_pointer_cast(opKeys.data()),
+            count,
+            outHits
+        );
+    }
+
+    // Legacy API: allocates a fresh hits buffer (prefer bulkQueryInto + queryHits).
+    bool* bulkQuery(uint64_t* keys, uint64_t count) {
+        return filter->bulk_query(keys, count);
+    }
+
     template <uint64_t K = 31>
     void bulkInsert(const char* d_sequence, uint64_t sequenceLength, uint64_t count) {
         if (opKeys.empty()) {
@@ -231,7 +264,7 @@ struct TcfHandle {
     }
 
     template <uint64_t K = 31>
-    void bulkQueryInto(const char* d_sequence, uint64_t sequenceLength, uint64_t count) {
+    void bulkQueryFromSequence(const char* d_sequence, uint64_t sequenceLength, uint64_t count) {
         if (opKeys.empty()) {
             bindWorkload(count);
         }

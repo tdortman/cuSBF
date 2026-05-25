@@ -623,6 +623,7 @@ void runTcfFprFastxBenchmark(TcfFprFastxFixture& fixture, bm::State& state) {
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     thrust::device_vector<uint64_t> d_queryScratch(g_data->query_chunk_kmers);
+    thrust::device_vector<uint8_t> d_queryHits(g_data->query_chunk_kmers);
     uint64_t falsePositives = 0;
     for (auto _ : state) {
         fixture.timer.start();
@@ -632,14 +633,12 @@ void runTcfFprFastxBenchmark(TcfFprFastxFixture& fixture, bm::State& state) {
             const uint64_t chunkKmers = queryChunkKmerCount(offset);
             generateQueryChunkKeys(offset, chunkKmers);
             gqf_tcf::copyPackedKmers(g_data->d_query_keys, d_queryScratch);
-            bool* hits = fixture.filter.bulkQuery(
-                thrust::raw_pointer_cast(d_queryScratch.data()), static_cast<uint64_t>(chunkKmers)
+            fixture.filter.bulkQueryInto(
+                thrust::raw_pointer_cast(d_queryScratch.data()),
+                chunkKmers,
+                reinterpret_cast<bool*>(thrust::raw_pointer_cast(d_queryHits.data()))
             );
-            thrust::device_ptr<bool> hitsPtr(hits);
-            positives += static_cast<uint64_t>(thrust::reduce(
-                hitsPtr, hitsPtr + static_cast<int64_t>(chunkKmers), 0, cuda::std::plus<int>{}
-            ));
-            CUSBF_CUDA_CALL(cudaFree(hits));
+            positives += countDeviceHits(d_queryHits, chunkKmers);
         }
         state.SetIterationTime(fixture.timer.elapsed());
         falsePositives = positives;

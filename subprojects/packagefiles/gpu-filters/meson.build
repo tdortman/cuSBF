@@ -3,6 +3,7 @@ project('gpu-filters', 'cpp', 'cuda', default_options: ['optimization=3'])
 patch_files = [
     'bulk-tcf/name-collision.patch',
     'bulk-tcf/params.patch',
+    'bulk-tcf/reuse-scratch-buffers.patch',
     'gqf/fix-popcnt.patch',
     'gqf/fix-qf-malloc-device.patch',
     'gqf/rename-hash-functions.patch',
