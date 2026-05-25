@@ -62,13 +62,96 @@ struct FastxInsertWorkload {
 inline std::unique_ptr<FastxInsertWorkload> g_fastxInsertWorkload;
 
 // Chunk size for hash-filter encode/insert/query (avoids multi-GB opKeys buffers).
-inline uint64_t g_fastxChunkKmers = 64ULL << 20;
+inline uint64_t g_fastxChunkKmers = 0;
+inline bool g_fastxChunkKmersUserSet = false;
+inline uint64_t g_fastxChunkKmersResolved = 0;
+inline uint64_t g_fastxChunkKmersResolvedReserved = 0;
+
+constexpr uint64_t kFastxChunkBytesPerKmer = sizeof(uint64_t) + sizeof(uint8_t);
+constexpr uint64_t kFastxChunkFloorKmers = 1ULL << 20;
+
+inline void cudaDeviceMemInfo(size_t& freeBytes, size_t& totalBytes) {
+    CUSBF_CUDA_CALL(cudaMemGetInfo(&freeBytes, &totalBytes));
+}
+
+inline size_t cudaDeviceFreeBytes() {
+    size_t freeBytes = 0;
+    size_t totalBytes = 0;
+    cudaDeviceMemInfo(freeBytes, totalBytes);
+    return freeBytes;
+}
+
+inline uint64_t fastxInsertSequenceDeviceBytes() {
+    return g_fastxInsertWorkload ? g_fastxInsertWorkload->host_insert_sequence.size() : 0;
+}
+
+inline uint64_t fastxPackedKmersDeviceBytes() {
+    if (!g_fastxInsertWorkload) {
+        return 0;
+    }
+    if (g_fastxInsertWorkload->gpuPrepareLevel < FastxGpuPrepareKind::PackedKmers) {
+        return 0;
+    }
+    return g_fastxInsertWorkload->insert_kmers * sizeof(uint64_t);
+}
+
+inline uint64_t resolveFastxChunkKmers(uint64_t totalItems, uint64_t reservedGpuBytes) {
+    if (g_fastxChunkKmersUserSet) {
+        g_fastxChunkKmersResolved = std::min(g_fastxChunkKmers, totalItems);
+        g_fastxChunkKmersResolvedReserved = reservedGpuBytes;
+        return g_fastxChunkKmersResolved;
+    }
+    if (g_fastxChunkKmersResolved != 0 && g_fastxChunkKmersResolvedReserved == reservedGpuBytes) {
+        return std::min(g_fastxChunkKmersResolved, totalItems);
+    }
+
+    // Target ~80% of total device memory for filter + sequence + encode/insert/query scratch.
+    constexpr double kTargetDeviceFraction = 0.80;
+    constexpr uint64_t kHeadroomBytes = 256ULL << 20;
+
+    size_t freeBytes = 0;
+    size_t totalBytes = 0;
+    cudaDeviceMemInfo(freeBytes, totalBytes);
+
+    size_t budget = 0;
+    if (totalBytes > reservedGpuBytes + kHeadroomBytes) {
+        const size_t targetUsed = static_cast<size_t>(
+            static_cast<double>(totalBytes) * kTargetDeviceFraction
+        );
+        if (targetUsed > reservedGpuBytes + kHeadroomBytes) {
+            budget = targetUsed - static_cast<size_t>(reservedGpuBytes) - kHeadroomBytes;
+        }
+    }
+    const size_t maxFromFree = freeBytes > kHeadroomBytes ? freeBytes - kHeadroomBytes : 0;
+    budget = std::min(budget, maxFromFree);
+
+    uint64_t chunk = budget / kFastxChunkBytesPerKmer;
+    chunk = std::max(chunk, kFastxChunkFloorKmers);
+    chunk = std::min(chunk, totalItems);
+
+    g_fastxChunkKmersResolved = chunk;
+    g_fastxChunkKmersResolvedReserved = reservedGpuBytes;
+
+    const uint64_t scratchGiB =
+        (chunk * kFastxChunkBytesPerKmer + (1ULL << 30) - 1) >> 30;
+    const uint64_t totalGiB = (totalBytes + (1ULL << 30) - 1) >> 30;
+    std::cerr << "FASTX chunk kmers: " << chunk << " (~" << scratchGiB
+              << " GiB encode/insert/query scratch, target "
+              << static_cast<int>(kTargetDeviceFraction * 100)
+              << "% of " << totalGiB << " GiB device, " << (freeBytes >> 30)
+              << " GiB free)\n";
+
+    return chunk;
+}
 
 inline uint64_t fastxWorkloadChunkKmers(uint64_t totalItems = UINT64_MAX) {
+    const uint64_t chunk = g_fastxChunkKmersResolved != 0 ? g_fastxChunkKmersResolved
+                        : g_fastxChunkKmersUserSet     ? g_fastxChunkKmers
+                                                       : (64ULL << 20);
     if (totalItems == UINT64_MAX) {
-        return g_fastxChunkKmers;
+        return chunk;
     }
-    return std::min(g_fastxChunkKmers, totalItems);
+    return std::min(chunk, totalItems);
 }
 
 inline uint64_t effectiveFastxCpuNumRecords() {
@@ -283,12 +366,14 @@ inline FastxBenchmarkCli parseFastxBenchmarkCli(int argc, char** argv) {
         constexpr const char* chunkKmersPrefix = "--fastx-chunk-kmers=";
         if (std::strncmp(arg.c_str(), chunkKmersPrefix, std::strlen(chunkKmersPrefix)) == 0) {
             g_fastxChunkKmers = std::stoull(arg.substr(std::strlen(chunkKmersPrefix)));
+            g_fastxChunkKmersUserSet = true;
             continue;
         }
         if (arg == "--fastx-chunk-kmers") {
             if (i + 1 < argc) {
                 ++i;
                 g_fastxChunkKmers = std::stoull(argv[i]);
+                g_fastxChunkKmersUserSet = true;
             } else {
                 std::cerr << "Missing value for --fastx-chunk-kmers\n";
                 std::exit(1);
