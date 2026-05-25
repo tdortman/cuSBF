@@ -61,6 +61,13 @@
 +			cached_indices_n = nitems;
 +		}
 +	}
++
++	// Pre-size insert/query scratch so bulk_query_into does not grow mid-benchmark.
++	__host__ void reserve_bulk_scratch(uint64_t nitems) {
++		ensure_small_keys(nitems);
++		ensure_scrambled_hits(nitems);
++		ensure_indices(nitems);
++	}
  
  	__host__ static my_type * host_build_tcf(uint64_t nslots){
  

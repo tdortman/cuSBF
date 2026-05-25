@@ -167,6 +167,9 @@ struct TcfHandle {
         const uint64_t chunk = chunkKmers();
         opKeys.resize(chunk);
         queryHits.resize(chunk);
+        if (filter != nullptr) {
+            filter->reserve_bulk_scratch(chunk);
+        }
     }
 
     template <uint64_t K = 31>

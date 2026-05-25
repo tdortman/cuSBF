@@ -145,7 +145,9 @@ struct TcfSetup {
         handle.createForFilterBits(filter_bits);
         const uint64_t reservedGpuBytes =
             handle.filterBytes() + benchmark_common::fastxInsertSequenceDeviceBytes();
-        benchmark_common::resolveFastxChunkKmers(numKmers, reservedGpuBytes);
+        benchmark_common::resolveFastxChunkKmers(
+            numKmers, reservedGpuBytes, benchmark_common::kTcfFastxChunkBytesPerKmer
+        );
         handle.bindWorkload(numKmers);
         filterMemory = handle.filterBytes();
     }
