@@ -72,9 +72,9 @@ constexpr uint64_t kFastxChunkBytesPerKmer = sizeof(uint64_t) + sizeof(uint8_t);
 // TCF per-chunk device footprint: harness opKeys/queryHits, cached bulk scratch, and
 // thrust::sort_by_key temp inside attach_lossy_buffers{,_recovery} (~2x uint64_t keys).
 constexpr uint64_t kTcfSortTempBytesPerKmer = sizeof(uint64_t) * 2;
-constexpr uint64_t kTcfFastxChunkBytesPerKmer =
-    kFastxChunkBytesPerKmer + sizeof(uint16_t) + sizeof(bool) + sizeof(uint64_t) +
-    kTcfSortTempBytesPerKmer;
+constexpr uint64_t kTcfFastxChunkBytesPerKmer = kFastxChunkBytesPerKmer + sizeof(uint16_t) +
+                                                sizeof(bool) + sizeof(uint64_t) +
+                                                kTcfSortTempBytesPerKmer;
 constexpr uint64_t kFastxChunkFloorKmers = 1ULL << 20;
 
 inline void cudaDeviceMemInfo(size_t& freeBytes, size_t& totalBytes) {
@@ -128,9 +128,8 @@ inline uint64_t resolveFastxChunkKmers(
 
     size_t budget = 0;
     if (totalBytes > reservedGpuBytes + kHeadroomBytes) {
-        const size_t targetUsed = static_cast<size_t>(
-            static_cast<double>(totalBytes) * kTargetDeviceFraction
-        );
+        const size_t targetUsed =
+            static_cast<size_t>(static_cast<double>(totalBytes) * kTargetDeviceFraction);
         if (targetUsed > reservedGpuBytes + kHeadroomBytes) {
             budget = targetUsed - static_cast<size_t>(reservedGpuBytes) - kHeadroomBytes;
         }
@@ -149,22 +148,20 @@ inline uint64_t resolveFastxChunkKmers(
     g_fastxChunkKmersResolvedReserved = reservedGpuBytes;
     g_fastxChunkKmersResolvedScratchBpp = scratchBytesPerKmer;
 
-    const uint64_t scratchGiB =
-        (chunk * scratchBytesPerKmer + (1ULL << 30) - 1) >> 30;
+    const uint64_t scratchGiB = (chunk * scratchBytesPerKmer + (1ULL << 30) - 1) >> 30;
     const uint64_t totalGiB = (totalBytes + (1ULL << 30) - 1) >> 30;
     std::cerr << "FASTX chunk kmers: " << chunk << " (~" << scratchGiB
               << " GiB per-chunk scratch @ " << scratchBytesPerKmer << " B/kmer, target "
-              << static_cast<int>(kTargetDeviceFraction * 100)
-              << "% of " << totalGiB << " GiB device, " << (freeBytes >> 30)
-              << " GiB free)\n";
+              << static_cast<int>(kTargetDeviceFraction * 100) << "% of " << totalGiB
+              << " GiB device, " << (freeBytes >> 30) << " GiB free)\n";
 
     return chunk;
 }
 
 inline uint64_t fastxWorkloadChunkKmers(uint64_t totalItems = UINT64_MAX) {
     const uint64_t chunk = g_fastxChunkKmersResolved != 0 ? g_fastxChunkKmersResolved
-                        : g_fastxChunkKmersUserSet     ? g_fastxChunkKmers
-                                                       : (64ULL << 20);
+                           : g_fastxChunkKmersUserSet     ? g_fastxChunkKmers
+                                                          : (64ULL << 20);
     if (totalItems == UINT64_MAX) {
         return chunk;
     }
@@ -557,11 +554,10 @@ inline uint64_t fastxBenchCapacityItems() {
     if (benchKmers == 0) {
         return 0;
     }
-    return static_cast<uint64_t>(std::ceil(
-        static_cast<double>(benchKmers) / filter_benchmark::kLoadFactor
-    ));
+    return static_cast<uint64_t>(
+        std::ceil(static_cast<double>(benchKmers) / filter_benchmark::kLoadFactor)
+    );
 }
-
 
 inline void setBenchmarkCounters(
     benchmark::State& state,
@@ -1133,9 +1129,7 @@ class SuperBloomCpuFastxFixture : public benchmark::Fixture {
             workload.host_insert_sequence.begin() + static_cast<std::ptrdiff_t>(sequenceLength)
         );
         workload.cpu_insert_fastx_path = writeGeneratedFastaFromSequence(
-            benchSequence,
-            effectiveFastxCpuNumRecords(),
-            "bloom-filter-comparison-cpu-insert"
+            benchSequence, effectiveFastxCpuNumRecords(), "bloom-filter-comparison-cpu-insert"
         );
 
         cpuFilterExponents(fastxBenchCapacityItems(), bitVectorSizeExp, blockSizeExp);
@@ -1259,11 +1253,11 @@ void runSuperBloomCpuFastxQuery(Fixture& fixture, benchmark::State& state) {
     };
 
 #define BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_ALL(FixtureName) \
-    BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_INSERT(FixtureName) \
+    BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_INSERT(FixtureName)  \
     BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_QUERY(FixtureName)
 
 #define BENCHMARK_REGISTER_SUPERBLOOM_CPU_FASTX_ALL(FixtureName) \
-    REGISTER_BENCHMARK_THROUGHPUT_FASTX(FixtureName, Insert); \
+    REGISTER_BENCHMARK_THROUGHPUT_FASTX(FixtureName, Insert);    \
     REGISTER_BENCHMARK_THROUGHPUT_FASTX(FixtureName, Query);
 
 template <typename Config>
@@ -1635,16 +1629,14 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
         ->Repetitions(5)                \
         ->ReportAggregatesOnly(true)
 
-// FPR vs filter size: sweep 2^22 … 2^31 bits (override with --filter-bits).
-#define BENCHMARK_CONFIG_FPR_FASTX  \
-    ->Unit(benchmark::kMillisecond) \
-        ->UseManualTime()           \
-        ->Iterations(1)             \
-        ->Repetitions(3)            \
+#define BENCHMARK_CONFIG_FPR_FASTX   \
+    ->Unit(benchmark::kMillisecond)  \
+        ->UseManualTime()            \
+        ->Iterations(1)              \
+        ->Repetitions(3)             \
         ->ReportAggregatesOnly(true) \
         ->ArgName("filter_bits_exp") \
-        ->RangeMultiplier(2)         \
-        ->Range(22, 31)
+        ->DenseRange(22, 31, 1)
 
 #define REGISTER_BENCHMARK(FixtureName, BenchName) \
     BENCHMARK_REGISTER_F(FixtureName, BenchName)   \
