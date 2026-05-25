@@ -8,6 +8,7 @@ base_cuda_args = [
     '-gencode=arch=compute_90,code=sm_90',
     '-gencode=arch=compute_80,code=sm_80',
     '-rdc=true',
+    # Consumers must also pass -rdc=true and device-link (see gqf_consumer_* below).
     # Upstream gpu-filters/gqf is noisy: we only consume the built library.
     '-w',
     '-Xcompiler=-w',
@@ -21,6 +22,13 @@ gqf_configs = [
     [8, 8, '8'],
     [16, 16, '16'],
     [32, 32, '32'],
+]
+
+# Relocatable device code in libgqf_*.a requires matching flags at link time.
+gqf_consumer_cuda_args = ['-rdc=true']
+gqf_consumer_link_args = [
+    '-rdc=true',
+    '-Xnvlink=--suppress-stack-size-warning',
 ]
 
 gqf_libs = {}
@@ -49,7 +57,10 @@ foreach config : gqf_configs
     gqf_deps += {suffix: declare_dependency(
         include_directories: gqf_inc,
         link_with: gqf_libs[suffix],
-        compile_args: ['-D', 'QF_BITS_PER_SLOT=@0@'.format(bits_per_slot)],
+        compile_args: [
+            '-D', 'QF_BITS_PER_SLOT=@0@'.format(bits_per_slot),
+        ] + gqf_consumer_cuda_args,
+        link_args: gqf_consumer_link_args,
     )}
 endforeach
 
