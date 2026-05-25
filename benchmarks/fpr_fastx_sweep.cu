@@ -42,7 +42,7 @@ static constexpr uint32_t kFprQuerySeed = 0xDEADBEEF;
 static constexpr uint64_t kDnaK = 31;
 
 using CuckooGpuConfig =
-    cuckoogpu::Config<uint64_t, 16, 500, 128, 16, cuckoogpu::XorAltBucketPolicy>;
+    cuckoogpu::Config<uint64_t, 16, 500, 256, 16, cuckoogpu::XorAltBucketPolicy>;
 using CuckooGpuFilter = cuckoogpu::Filter<CuckooGpuConfig>;
 
 struct FastxData {
