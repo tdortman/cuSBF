@@ -100,6 +100,7 @@
 
             CPATH = lib.makeIncludePath [ cuda.path ];
             CUDA_HOME = cuda.path;
+            CARGO_NET_OFFLINE = true;
 
             LD_LIBRARY_PATH = "${
               lib.makeLibraryPath (buildInputs ++ nativeBuildInputs)
