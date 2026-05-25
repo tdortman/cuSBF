@@ -20,6 +20,8 @@
 
 #include <cusbf/helpers.cuh>
 
+#include "benchmark_common.cuh"
+
 namespace gpu_filter_gqf_tcf {
 
 constexpr double kLoadFactor = 0.95;
@@ -134,7 +136,11 @@ struct GqfHandle {
 struct TcfHandle {
     TcfFilter* filter = nullptr;
     uint64_t capacity = 0;
+    uint64_t numItems = 0;
     uint64_t* misses = nullptr;
+    // TCF mutates keys in-place: re-encode into opKeys before each bulk op.
+    thrust::device_vector<uint64_t> opKeys;
+    thrust::device_vector<uint8_t> queryHits;
 
     void createForCapacity(uint64_t newCapacity) {
         destroy();
@@ -150,6 +156,25 @@ struct TcfHandle {
 
     void createForFilterBits(uint64_t filterBits) {
         createForCapacity(tcfCapacityForFilterBits(filterBits));
+    }
+
+    void bindWorkload(uint64_t count) {
+        numItems = count;
+        opKeys.resize(count);
+        queryHits.resize(count);
+    }
+
+    template <uint64_t K = 31>
+    void refreshOpKeysFromSequence(const char* d_sequence, uint64_t sequenceLength) {
+        if (numItems == 0) {
+            return;
+        }
+        benchmark_common::gpuEncodePackedKmers<K>(
+            d_sequence,
+            sequenceLength,
+            thrust::raw_pointer_cast(opKeys.data())
+        );
+        CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     }
 
     [[nodiscard]] size_t filterBytes() const {
@@ -169,23 +194,52 @@ struct TcfHandle {
             TcfFilter::host_free_tcf(filter);
             filter = nullptr;
         }
+        opKeys.clear();
+        opKeys.shrink_to_fit();
+        queryHits.clear();
+        queryHits.shrink_to_fit();
         capacity = 0;
+        numItems = 0;
+        CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     }
 
     ~TcfHandle() {
         destroy();
     }
 
-    void bulkInsert(uint64_t* keys, uint64_t count) const {
+    void bulkInsertPrepared(uint64_t count) {
         CUSBF_CUDA_CALL(cudaMemset(misses, 0, sizeof(uint64_t)));
-        filter->bulk_insert(keys, count, misses);
+        filter->bulk_insert(thrust::raw_pointer_cast(opKeys.data()), count, misses);
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     }
 
-    bool* bulkQuery(uint64_t* keys, uint64_t count) const {
-        bool* hits = filter->bulk_query(keys, count);
-        CUSBF_CUDA_CALL(cudaDeviceSynchronize());
-        return hits;
+    void bulkQueryPrepared(uint64_t count) {
+        filter->bulk_query_into(
+            thrust::raw_pointer_cast(opKeys.data()),
+            count,
+            reinterpret_cast<bool*>(thrust::raw_pointer_cast(queryHits.data()))
+        );
+    }
+
+    template <uint64_t K = 31>
+    void bulkInsert(const char* d_sequence, uint64_t sequenceLength, uint64_t count) {
+        if (opKeys.empty()) {
+            bindWorkload(count);
+        }
+        refreshOpKeysFromSequence<K>(d_sequence, sequenceLength);
+        bulkInsertPrepared(count);
+    }
+
+    template <uint64_t K = 31>
+    void bulkQueryInto(const char* d_sequence, uint64_t sequenceLength, uint64_t count) {
+        if (opKeys.empty()) {
+            bindWorkload(count);
+        }
+        if (queryHits.size() < count) {
+            queryHits.resize(count);
+        }
+        refreshOpKeysFromSequence<K>(d_sequence, sequenceLength);
+        bulkQueryPrepared(count);
     }
 };
 
