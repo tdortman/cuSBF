@@ -41,8 +41,11 @@ using SuperBloomCpuThroughputConfig = cusbf::Config<31, 28, 16, 4>;
 using SuperBloomFixture =
     benchmark_common::SuperBloomCpuFastxFixture<SuperBloomCpuThroughputConfig>;
 
-static void ensureThroughputFastxReady() {
-    benchmark_common::prepareFastxInsertWorkload();
+static void ensureThroughputFastxReady(
+    benchmark_common::FastxGpuPrepareKind gpuPrepare =
+        benchmark_common::FastxGpuPrepareKind::PackedKmers
+) {
+    benchmark_common::prepareFastxInsertWorkload<31>(cusbf::DnaAlphabet::separator, gpuPrepare);
 }
 
 static void setThroughputCounters(
@@ -133,7 +136,7 @@ struct TcfSetup {
     gqf_tcf::TcfHandle handle;
 
     void init() {
-        ensureThroughputFastxReady();
+        ensureThroughputFastxReady(benchmark_common::FastxGpuPrepareKind::SequenceOnDevice);
         filter_bits = benchmark_common::resolveFastxFilterBits(
             benchmark_common::g_fastxInsertWorkload->insert_kmers
         );
@@ -371,18 +374,17 @@ BENCHMARK_DEFINE_F(GqfFixture, Query)(bm::State& state) {
 BENCHMARK_DEFINE_F(TcfFixture, Insert)(bm::State& state) {
     auto& fix = *static_cast<TcfFixture*>(this);
     auto& s = fix.setup;
-    const char* const d_sequence = thrust::raw_pointer_cast(
-        benchmark_common::g_fastxInsertWorkload->d_insert_sequence.data()
-    );
+    const char* const d_sequence =
+        thrust::raw_pointer_cast(benchmark_common::g_fastxInsertWorkload->d_insert_sequence.data());
     const uint64_t sequenceLength =
         benchmark_common::g_fastxInsertWorkload->d_insert_sequence.size();
     for (auto _ : state) {
         s.destroy();
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
         s.init();
-        s.handle.refreshOpKeysFromSequence(d_sequence, sequenceLength);
+        s.handle.refreshOpKeysAllChunksFromSequence(d_sequence, sequenceLength);
         fix.timer.start();
-        s.handle.bulkInsertPrepared(s.numKmers);
+        s.handle.bulkInsertAllChunks();
         state.SetIterationTime(fix.timer.elapsed());
         s.filterMemory = s.handle.filterBytes();
     }
@@ -392,18 +394,17 @@ BENCHMARK_DEFINE_F(TcfFixture, Insert)(bm::State& state) {
 BENCHMARK_DEFINE_F(TcfFixture, Query)(bm::State& state) {
     auto& fix = *static_cast<TcfFixture*>(this);
     auto& s = fix.setup;
-    const char* const d_sequence = thrust::raw_pointer_cast(
-        benchmark_common::g_fastxInsertWorkload->d_insert_sequence.data()
-    );
+    const char* const d_sequence =
+        thrust::raw_pointer_cast(benchmark_common::g_fastxInsertWorkload->d_insert_sequence.data());
     const uint64_t sequenceLength =
         benchmark_common::g_fastxInsertWorkload->d_insert_sequence.size();
-    s.handle.refreshOpKeysFromSequence(d_sequence, sequenceLength);
-    s.handle.bulkInsertPrepared(s.numKmers);
+    s.handle.refreshOpKeysAllChunksFromSequence(d_sequence, sequenceLength);
+    s.handle.bulkInsertAllChunks();
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
     for (auto _ : state) {
-        s.handle.refreshOpKeysFromSequence(d_sequence, sequenceLength);
+        s.handle.refreshOpKeysAllChunksFromSequence(d_sequence, sequenceLength);
         fix.timer.start();
-        s.handle.bulkQueryPrepared(s.numKmers);
+        s.handle.bulkQueryAllChunks();
         state.SetIterationTime(fix.timer.elapsed());
         bm::DoNotOptimize(thrust::raw_pointer_cast(s.handle.queryHits.data()));
     }

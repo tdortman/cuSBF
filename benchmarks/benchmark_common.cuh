@@ -44,15 +44,32 @@ inline std::string g_insertFastxPath;
 // 0 = use std::thread::hardware_concurrency() when building the CPU parallel FASTA.
 inline uint64_t g_fastxCpuNumRecords = 0;
 
+enum class FastxGpuPrepareKind {
+    HostOnly,
+    SequenceOnDevice,
+    PackedKmers,
+};
+
 struct FastxInsertWorkload {
     std::vector<char> host_insert_sequence;
     thrust::device_vector<char> d_insert_sequence;
     thrust::device_vector<uint64_t> d_insert_packed_kmers;
     uint64_t insert_kmers = 0;
     std::string cpu_insert_fastx_path;
+    FastxGpuPrepareKind gpuPrepareLevel = FastxGpuPrepareKind::HostOnly;
 };
 
 inline std::unique_ptr<FastxInsertWorkload> g_fastxInsertWorkload;
+
+// Chunk size for hash-filter encode/insert/query (avoids multi-GB opKeys buffers).
+inline uint64_t g_fastxChunkKmers = 64ULL << 20;
+
+inline uint64_t fastxWorkloadChunkKmers(uint64_t totalItems = UINT64_MAX) {
+    if (totalItems == UINT64_MAX) {
+        return g_fastxChunkKmers;
+    }
+    return std::min(g_fastxChunkKmers, totalItems);
+}
 
 inline uint64_t effectiveFastxCpuNumRecords() {
     if (g_fastxCpuNumRecords != 0) {
@@ -263,6 +280,22 @@ inline FastxBenchmarkCli parseFastxBenchmarkCli(int argc, char** argv) {
             continue;
         }
 
+        constexpr const char* chunkKmersPrefix = "--fastx-chunk-kmers=";
+        if (std::strncmp(arg.c_str(), chunkKmersPrefix, std::strlen(chunkKmersPrefix)) == 0) {
+            g_fastxChunkKmers = std::stoull(arg.substr(std::strlen(chunkKmersPrefix)));
+            continue;
+        }
+        if (arg == "--fastx-chunk-kmers") {
+            if (i + 1 < argc) {
+                ++i;
+                g_fastxChunkKmers = std::stoull(argv[i]);
+            } else {
+                std::cerr << "Missing value for --fastx-chunk-kmers\n";
+                std::exit(1);
+            }
+            continue;
+        }
+
         cli.benchmark_argv.push_back(argv[i]);
     }
 
@@ -441,7 +474,12 @@ inline void gpuGeneratePackedKmers(
 }
 
 template <uint64_t K, typename Alphabet = cusbf::DnaAlphabet>
-__global__ void encodePackedKmersKernel(const char* sequence, uint64_t numKmers, uint64_t* output) {
+__global__ void encodePackedKmersKernel(
+    const char* sequence,
+    uint64_t kmerStart,
+    uint64_t numKmers,
+    uint64_t* output
+) {
     constexpr uint64_t symbolBits = cuda::std::bit_width(Alphabet::symbolCount - 1);
     constexpr uint64_t symbolMask = (uint64_t{1} << symbolBits) - 1;
     const uint64_t idx = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -449,9 +487,11 @@ __global__ void encodePackedKmersKernel(const char* sequence, uint64_t numKmers,
         return;
     }
 
+    const uint64_t kmerIndex = kmerStart + idx;
     uint64_t packed = 0;
     for (uint64_t i = 0; i < K; ++i) {
-        const uint8_t encoded = Alphabet::encode(sequence + (idx + i) * Alphabet::symbolWidth);
+        const uint8_t encoded =
+            Alphabet::encode(sequence + (kmerIndex + i) * Alphabet::symbolWidth);
         packed = (packed << symbolBits) | (encoded & symbolMask);
     }
     output[idx] = packed;
@@ -462,22 +502,67 @@ inline void gpuEncodePackedKmers(
     const char* d_sequence,
     uint64_t sequenceLength,
     uint64_t* d_output,
-    cudaStream_t stream = {}
+    cudaStream_t stream = {},
+    uint64_t kmerStart = 0,
+    uint64_t numKmers = 0
 ) {
     const uint64_t symbols = sequenceLength / Alphabet::symbolWidth;
-    const uint64_t numKmers = symbols >= K ? symbols - K + 1 : 0;
-    if (numKmers == 0) {
+    const uint64_t totalKmers = symbols >= K ? symbols - K + 1 : 0;
+    if (kmerStart >= totalKmers) {
+        return;
+    }
+    const uint64_t available = totalKmers - kmerStart;
+    const uint64_t encodeCount = numKmers == 0 ? available : std::min(numKmers, available);
+    if (encodeCount == 0) {
         return;
     }
     constexpr uint64_t blockSize = 256;
-    const uint64_t gridSize = cuda::ceil_div(numKmers, blockSize);
+    const uint64_t gridSize = cuda::ceil_div(encodeCount, blockSize);
     encodePackedKmersKernel<K, Alphabet>
-        <<<gridSize, blockSize, 0, stream>>>(d_sequence, numKmers, d_output);
+        <<<gridSize, blockSize, 0, stream>>>(d_sequence, kmerStart, encodeCount, d_output);
+}
+
+inline void uploadFastxSequenceToDevice(FastxInsertWorkload& workload) {
+    if (workload.gpuPrepareLevel >= FastxGpuPrepareKind::SequenceOnDevice) {
+        return;
+    }
+    workload.d_insert_sequence.resize(workload.host_insert_sequence.size());
+    CUSBF_CUDA_CALL(cudaMemcpy(
+        thrust::raw_pointer_cast(workload.d_insert_sequence.data()),
+        workload.host_insert_sequence.data(),
+        workload.host_insert_sequence.size(),
+        cudaMemcpyHostToDevice
+    ));
+    workload.gpuPrepareLevel = FastxGpuPrepareKind::SequenceOnDevice;
 }
 
 template <uint64_t K = 31>
-inline void prepareFastxInsertWorkload(char separator = cusbf::DnaAlphabet::separator) {
+inline void encodeFastxPackedKmersOnDevice(FastxInsertWorkload& workload) {
+    if (workload.gpuPrepareLevel >= FastxGpuPrepareKind::PackedKmers) {
+        return;
+    }
+    uploadFastxSequenceToDevice(workload);
+    workload.d_insert_packed_kmers.resize(workload.insert_kmers);
+    gpuEncodePackedKmers<K>(
+        thrust::raw_pointer_cast(workload.d_insert_sequence.data()),
+        workload.host_insert_sequence.size(),
+        thrust::raw_pointer_cast(workload.d_insert_packed_kmers.data())
+    );
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+    workload.gpuPrepareLevel = FastxGpuPrepareKind::PackedKmers;
+}
+
+template <uint64_t K = 31>
+inline void prepareFastxInsertWorkload(
+    char separator = cusbf::DnaAlphabet::separator,
+    FastxGpuPrepareKind gpuPrepare = FastxGpuPrepareKind::PackedKmers
+) {
     if (g_fastxInsertWorkload) {
+        if (gpuPrepare == FastxGpuPrepareKind::SequenceOnDevice) {
+            uploadFastxSequenceToDevice(*g_fastxInsertWorkload);
+        } else if (gpuPrepare == FastxGpuPrepareKind::PackedKmers) {
+            encodeFastxPackedKmersOnDevice<K>(*g_fastxInsertWorkload);
+        }
         return;
     }
     if (g_insertFastxPath.empty()) {
@@ -495,28 +580,19 @@ inline void prepareFastxInsertWorkload(char separator = cusbf::DnaAlphabet::sepa
     workload->insert_kmers = workload->host_insert_sequence.size() >= K
                                  ? workload->host_insert_sequence.size() - K + 1
                                  : 0;
+    workload->gpuPrepareLevel = FastxGpuPrepareKind::HostOnly;
 
-    workload->d_insert_sequence.resize(workload->host_insert_sequence.size());
-    CUSBF_CUDA_CALL(cudaMemcpy(
-        thrust::raw_pointer_cast(workload->d_insert_sequence.data()),
-        workload->host_insert_sequence.data(),
-        workload->host_insert_sequence.size(),
-        cudaMemcpyHostToDevice
-    ));
-
-    workload->d_insert_packed_kmers.resize(workload->insert_kmers);
-    gpuEncodePackedKmers<K>(
-        thrust::raw_pointer_cast(workload->d_insert_sequence.data()),
-        workload->host_insert_sequence.size(),
-        thrust::raw_pointer_cast(workload->d_insert_packed_kmers.data())
-    );
-    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+    if (gpuPrepare == FastxGpuPrepareKind::SequenceOnDevice) {
+        uploadFastxSequenceToDevice(*workload);
+    } else if (gpuPrepare == FastxGpuPrepareKind::PackedKmers) {
+        encodeFastxPackedKmersOnDevice<K>(*workload);
+    }
 
     g_fastxInsertWorkload = std::move(workload);
 }
 
 inline void ensureFastxCpuInsertFasta(const char* prefix = "bloom-filter-comparison-cpu-insert") {
-    prepareFastxInsertWorkload();
+    prepareFastxInsertWorkload<31>(cusbf::DnaAlphabet::separator, FastxGpuPrepareKind::HostOnly);
     auto& workload = *g_fastxInsertWorkload;
     if (!workload.cpu_insert_fastx_path.empty()) {
         return;
@@ -876,7 +952,9 @@ class SuperBloomCpuFastxFixture : public benchmark::Fixture {
 
     void SetUp(const benchmark::State&) override {
         initFailed_ = false;
-        prepareFastxInsertWorkload<Config::k>();
+        prepareFastxInsertWorkload<Config::k>(
+            cusbf::DnaAlphabet::separator, FastxGpuPrepareKind::HostOnly
+        );
         ensureFastxCpuInsertFasta();
 
         numKmers = g_fastxInsertWorkload->insert_kmers;

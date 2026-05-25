@@ -158,23 +158,65 @@ struct TcfHandle {
         createForCapacity(tcfCapacityForFilterBits(filterBits));
     }
 
+    [[nodiscard]] uint64_t chunkKmers() const {
+        return benchmark_common::fastxWorkloadChunkKmers(numItems);
+    }
+
     void bindWorkload(uint64_t count) {
         numItems = count;
-        opKeys.resize(count);
-        queryHits.resize(count);
+        const uint64_t chunk = chunkKmers();
+        opKeys.resize(chunk);
+        queryHits.resize(chunk);
     }
 
     template <uint64_t K = 31>
-    void refreshOpKeysFromSequence(const char* d_sequence, uint64_t sequenceLength) {
-        if (numItems == 0) {
+    void refreshOpKeysFromSequence(
+        const char* d_sequence,
+        uint64_t sequenceLength,
+        uint64_t kmerStart = 0,
+        uint64_t count = 0
+    ) {
+        const uint64_t encodeCount = count == 0 ? numItems : count;
+        if (encodeCount == 0) {
             return;
+        }
+        if (opKeys.size() < encodeCount) {
+            opKeys.resize(encodeCount);
         }
         benchmark_common::gpuEncodePackedKmers<K>(
             d_sequence,
             sequenceLength,
-            thrust::raw_pointer_cast(opKeys.data())
+            thrust::raw_pointer_cast(opKeys.data()),
+            {},
+            kmerStart,
+            encodeCount
         );
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+    }
+
+    template <uint64_t K = 31>
+    void refreshOpKeysAllChunksFromSequence(const char* d_sequence, uint64_t sequenceLength) {
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < numItems; offset += chunk) {
+            const uint64_t n = std::min(chunk, numItems - offset);
+            refreshOpKeysFromSequence<K>(d_sequence, sequenceLength, offset, n);
+        }
+    }
+
+    void bulkInsertAllChunks() {
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < numItems; offset += chunk) {
+            const uint64_t n = std::min(chunk, numItems - offset);
+            bulkInsertPrepared(n);
+        }
+    }
+
+    void bulkQueryAllChunks() {
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < numItems; offset += chunk) {
+            const uint64_t n = std::min(chunk, numItems - offset);
+            bulkQueryPrepared(n);
+        }
     }
 
     [[nodiscard]] size_t filterBytes() const {
@@ -221,32 +263,37 @@ struct TcfHandle {
         );
     }
 
-
     // TCF mutates keys in-place; copy into opKeys before each bulk op.
-    void refreshOpKeysFromPacked(uint64_t* keys, uint64_t count) {
-        if (opKeys.size() < count) {
-            bindWorkload(count);
+    void refreshOpKeysFromPacked(uint64_t* keys, uint64_t count, uint64_t keyOffset = 0) {
+        const uint64_t chunk = chunkKmers();
+        const uint64_t n = std::min(chunk, count);
+        if (opKeys.size() < n) {
+            opKeys.resize(n);
         }
         CUSBF_CUDA_CALL(cudaMemcpy(
             thrust::raw_pointer_cast(opKeys.data()),
-            keys,
-            count * sizeof(uint64_t),
+            keys + keyOffset,
+            n * sizeof(uint64_t),
             cudaMemcpyDeviceToDevice
         ));
     }
 
+    void bulkInsertFromPacked(uint64_t* keys, uint64_t count) {
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < count; offset += chunk) {
+            const uint64_t n = std::min(chunk, count - offset);
+            refreshOpKeysFromPacked(keys, n, offset);
+            bulkInsertPrepared(n);
+        }
+    }
+
     void bulkInsert(uint64_t* keys, uint64_t count) {
-        refreshOpKeysFromPacked(keys, count);
-        bulkInsertPrepared(count);
+        bulkInsertFromPacked(keys, count);
     }
 
     void bulkQueryInto(uint64_t* keys, uint64_t count, bool* outHits) {
         refreshOpKeysFromPacked(keys, count);
-        filter->bulk_query_into(
-            thrust::raw_pointer_cast(opKeys.data()),
-            count,
-            outHits
-        );
+        filter->bulk_query_into(thrust::raw_pointer_cast(opKeys.data()), count, outHits);
     }
 
     // Legacy API: allocates a fresh hits buffer (prefer bulkQueryInto + queryHits).
@@ -256,23 +303,24 @@ struct TcfHandle {
 
     template <uint64_t K = 31>
     void bulkInsert(const char* d_sequence, uint64_t sequenceLength, uint64_t count) {
-        if (opKeys.empty()) {
-            bindWorkload(count);
+        bindWorkload(count);
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < count; offset += chunk) {
+            const uint64_t n = std::min(chunk, count - offset);
+            refreshOpKeysFromSequence<K>(d_sequence, sequenceLength, offset, n);
+            bulkInsertPrepared(n);
         }
-        refreshOpKeysFromSequence<K>(d_sequence, sequenceLength);
-        bulkInsertPrepared(count);
     }
 
     template <uint64_t K = 31>
     void bulkQueryFromSequence(const char* d_sequence, uint64_t sequenceLength, uint64_t count) {
-        if (opKeys.empty()) {
-            bindWorkload(count);
+        bindWorkload(count);
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < count; offset += chunk) {
+            const uint64_t n = std::min(chunk, count - offset);
+            refreshOpKeysFromSequence<K>(d_sequence, sequenceLength, offset, n);
+            bulkQueryPrepared(n);
         }
-        if (queryHits.size() < count) {
-            queryHits.resize(count);
-        }
-        refreshOpKeysFromSequence<K>(d_sequence, sequenceLength);
-        bulkQueryPrepared(count);
     }
 };
 
