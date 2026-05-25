@@ -503,6 +503,61 @@ inline void setFilterFprCounters(
 
 }  // namespace filter_benchmark
 
+inline uint64_t fastxFilterBitsBudget() {
+    if (!g_fastxInsertWorkload) {
+        return 0;
+    }
+    return resolveFastxFilterBits(g_fastxInsertWorkload->insert_kmers);
+}
+
+inline uint64_t fastxBenchKmersAtLoadFactor() {
+    const uint64_t bits = fastxFilterBitsBudget();
+    if (bits == 0) {
+        return 0;
+    }
+    return filter_benchmark::numItemsForTargetMemory(bits / 8, filter_benchmark::kBitsPerTag);
+}
+
+inline uint64_t fastxBenchSequenceLength(uint64_t benchKmers, uint64_t k = 31) {
+    if (!g_fastxInsertWorkload || benchKmers == 0) {
+        return 0;
+    }
+    const uint64_t maxLen = g_fastxInsertWorkload->host_insert_sequence.size();
+    const uint64_t needed = benchKmers + k - 1;
+    return std::min(maxLen, needed);
+}
+
+/// Shared FASTX throughput sizing for filter-comparison (95% target load factor).
+struct FastxThroughputConfig {
+    uint64_t genome_kmers = 0;
+    uint64_t bench_kmers = 0;
+    uint64_t bench_seq_len = 0;
+    uint64_t filter_bits = 0;
+};
+
+inline FastxThroughputConfig resolveFastxThroughputConfig(uint64_t k = 31) {
+    FastxThroughputConfig cfg;
+    if (!g_fastxInsertWorkload) {
+        return cfg;
+    }
+    cfg.genome_kmers = g_fastxInsertWorkload->insert_kmers;
+    cfg.filter_bits = resolveFastxFilterBits(cfg.genome_kmers);
+    cfg.bench_kmers = fastxBenchKmersAtLoadFactor();
+    cfg.bench_seq_len = fastxBenchSequenceLength(cfg.bench_kmers, k);
+    return cfg;
+}
+
+inline uint64_t fastxBenchCapacityItems() {
+    const uint64_t benchKmers = fastxBenchKmersAtLoadFactor();
+    if (benchKmers == 0) {
+        return 0;
+    }
+    return static_cast<uint64_t>(std::ceil(
+        static_cast<double>(benchKmers) / filter_benchmark::kLoadFactor
+    ));
+}
+
+
 inline void setBenchmarkCounters(
     benchmark::State& state,
     uint64_t memoryBytes,
@@ -1031,7 +1086,7 @@ void runCuSbfFpr(Fixture& fixture, benchmark::State& state) {
 /// SuperBloom filter that gives at least 16 bits per item while satisfying
 /// the Rust library's SHARD_COUNT constraint (nb_blocks >= 1024).
 inline void cpuFilterExponents(uint64_t numKmers, uint8_t& bitExp, uint8_t& blockExp) {
-    constexpr uint64_t kBitsPerItem = 16;
+    constexpr uint64_t kBitsPerItem = filter_benchmark::kBitsPerTag;
     uint64_t filter_bits = cuda::std::bit_ceil(numKmers * kBitsPerItem);
     constexpr uint64_t kMinFilterBits = uint64_t{1} << 19;
     filter_bits = std::max(filter_bits, kMinFilterBits);
@@ -1057,13 +1112,28 @@ class SuperBloomCpuFastxFixture : public benchmark::Fixture {
         prepareFastxInsertWorkload<Config::k>(
             cusbf::DnaAlphabet::separator, FastxGpuPrepareKind::HostOnly
         );
-        ensureFastxCpuInsertFasta();
 
-        numKmers = g_fastxInsertWorkload->insert_kmers;
-        sequenceLength = g_fastxInsertWorkload->host_insert_sequence.size();
-        filter_bits = resolveFastxFilterBits(numKmers);
+        const FastxThroughputConfig cfg = resolveFastxThroughputConfig(Config::k);
+        numKmers = cfg.bench_kmers;
+        sequenceLength = cfg.bench_seq_len;
+        filter_bits = cfg.filter_bits;
 
-        cpuFilterExponents(numKmers, bitVectorSizeExp, blockSizeExp);
+        auto& workload = *g_fastxInsertWorkload;
+        if (!workload.cpu_insert_fastx_path.empty()) {
+            std::filesystem::remove(workload.cpu_insert_fastx_path);
+            workload.cpu_insert_fastx_path.clear();
+        }
+        const std::vector<char> benchSequence(
+            workload.host_insert_sequence.begin(),
+            workload.host_insert_sequence.begin() + static_cast<std::ptrdiff_t>(sequenceLength)
+        );
+        workload.cpu_insert_fastx_path = writeGeneratedFastaFromSequence(
+            benchSequence,
+            effectiveFastxCpuNumRecords(),
+            "bloom-filter-comparison-cpu-insert"
+        );
+
+        cpuFilterExponents(fastxBenchCapacityItems(), bitVectorSizeExp, blockSizeExp);
 
         unsigned n = std::thread::hardware_concurrency();
         threadCount_ = n > 0 ? static_cast<size_t>(n) : 0;
@@ -1184,11 +1254,11 @@ void runSuperBloomCpuFastxQuery(Fixture& fixture, benchmark::State& state) {
     };
 
 #define BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_ALL(FixtureName) \
-    BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_INSERT(FixtureName); \
+    BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_INSERT(FixtureName) \
     BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_QUERY(FixtureName)
 
 #define BENCHMARK_REGISTER_SUPERBLOOM_CPU_FASTX_ALL(FixtureName) \
-    REGISTER_BENCHMARK_THROUGHPUT_FASTX(FixtureName, Insert);    \
+    REGISTER_BENCHMARK_THROUGHPUT_FASTX(FixtureName, Insert); \
     REGISTER_BENCHMARK_THROUGHPUT_FASTX(FixtureName, Query);
 
 template <typename Config>

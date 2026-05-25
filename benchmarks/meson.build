@@ -58,16 +58,12 @@ if get_option('param_sweep').enabled()
     endforeach
 endif
 
-gqf_benchmark_link_args = ['-Xnvlink=--suppress-stack-size-warning']
+# gqf_dep carries -rdc=true link_args for device-linking libgqf; do not add -rdc to benchmark .cu.
 tcf_benchmark_cuda_args = ['-Xcompiler=-Wno-implicit-fallthrough']
 
 foreach name, config : benchmarks
-    link_args = []
     extra_cuda_args = config.get('extra_args', [])
     deps = config.get('deps', [])
-    if gqf_dep in deps
-        link_args += gqf_benchmark_link_args
-    endif
     if tcf_dep in deps
         extra_cuda_args += tcf_benchmark_cuda_args
     endif
@@ -76,7 +72,6 @@ foreach name, config : benchmarks
         config['src'],
         dependencies: bench_deps + deps,
         cuda_args: cuda_args + extra_cuda_args,
-        link_args: link_args,
         install: false,
     )
 endforeach
@@ -88,4 +83,3 @@ executable(
     cuda_args: cuda_args,
     install: false,
 )
-
