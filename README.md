@@ -39,8 +39,13 @@ The findere scheme (s-mer width) provides strong false-positive reduction at equ
 Benchmarks can be reproduced with:
 
 ```bash
-./build/benchmarks/gpu-filter-comparison --benchmark_filter="CuSBF"
-./build/benchmarks/fpr-fastx-sweep
+# Throughput on one FASTX file (~16 bits/item)
+./build/benchmarks/gpu-filter-comparison --insert-fastx=reads.fa --benchmark_filter="Fixture/(Insert|Query)"
+./scripts/compare_filters.py results.csv -o build
+
+# FPR: real FASTX insert, 1B random k-mer queries, line plot (filter size vs hits)
+./build/benchmarks/gpu-filter-fpr-fastx --insert-fastx=reads.fa
+./scripts/plot_fpr_fastx.py results.csv -o build
 ```
 
 ## Requirements

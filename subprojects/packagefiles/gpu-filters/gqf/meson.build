@@ -7,6 +7,9 @@ base_cuda_args = [
     '-gencode=arch=compute_120,code=sm_120',
     '-gencode=arch=compute_75,code=compute_75',
     '-rdc=true',
+    # Upstream gpu-filters/gqf is noisy: we only consume the built library.
+    '-w',
+    '-Xcompiler=-w',
 ]
 
 gqf_sources = ['src/gqf.cu', 'src/hashutil.cu', 'src/partitioned_counter.cu']
@@ -49,5 +52,5 @@ foreach config : gqf_configs
     )}
 endforeach
 
-# Default dependency uses 16-bit configuration
-gqf_dep = gqf_deps['16']
+# Default dependency uses 8-bit slots (better bits/item vs load factor at power-of-2 sizes).
+gqf_dep = gqf_deps['8']

@@ -32,9 +32,32 @@ SUPERBLOOM_CPU_CONFIG_FIXTURE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 CUCO_FIXTURE_PATTERN = re.compile(r"^CucoBloomFixture$", re.IGNORECASE)
+CUCKOO_GPU_FIXTURE_PATTERN = re.compile(r"^CuckooGpuFixture$", re.IGNORECASE)
+GQF_FIXTURE_PATTERN = re.compile(r"^GqfFixture$", re.IGNORECASE)
+TCF_FIXTURE_PATTERN = re.compile(r"^TcfFixture$", re.IGNORECASE)
+# Cuckoo-GPU-style fair FPR benchmarks (gpu-filter-fair-comparison).
+CUCO_FAIR_FPR_PATTERN = re.compile(r"^CucoBloom_FPR$", re.IGNORECASE)
+CUCKOO_FAIR_FPR_PATTERN = re.compile(r"^CuckooGpu_FPR$", re.IGNORECASE)
+GQF_FAIR_FPR_PATTERN = re.compile(r"^Gqf_FPR$", re.IGNORECASE)
+TCF_FAIR_FPR_PATTERN = re.compile(r"^Tcf_FPR$", re.IGNORECASE)
+GCF_FAIR_FPR_PATTERN = re.compile(r"^GCF_FPR$", re.IGNORECASE)
+BBF_FAIR_FPR_PATTERN = re.compile(r"^BBF_FPR$", re.IGNORECASE)
+PROTEIN_GQF_FIXTURE_PATTERN = re.compile(r"^ProteinGqfFixture$", re.IGNORECASE)
+PROTEIN_TCF_FIXTURE_PATTERN = re.compile(r"^ProteinTcfFixture$", re.IGNORECASE)
 
-CUSBF_VARIANT_MARKERS = ["o", "s", "^", "D", "P", "X", "v", "<", ">"]
-CUSBF_VARIANT_LINESTYLES = ["-", "--", "-.", ":"]
+# Same colour as cuSBF; marker distinguishes s (blocked-window size).
+CUSBF_S_MARKERS: dict[int, str] = {
+    31: "x",
+    30: "o",
+    28: "s",
+    27: "^",
+    26: "D",
+    24: "P",
+    22: "v",
+    20: "<",
+    16: ">",
+}
+DEFAULT_CUSBF_S_MARKER = "o"
 
 
 def parse_cusbf_variant(fixture_name: str, row: pd.Series) -> Optional[int]:
@@ -80,8 +103,34 @@ def extract_filter_series(name: str, row: pd.Series) -> Optional[tuple[str, str,
             or CUSBF_FIXTURE_PATTERN.match(fixture_name) is not None
         )
         is_cuco = CUCO_FIXTURE_PATTERN.match(fixture_name) is not None
+        is_cuckoo = CUCKOO_GPU_FIXTURE_PATTERN.match(fixture_name) is not None
+        is_gqf = GQF_FIXTURE_PATTERN.match(fixture_name) is not None
+        is_tcf = TCF_FIXTURE_PATTERN.match(fixture_name) is not None
+        is_protein_gqf = PROTEIN_GQF_FIXTURE_PATTERN.match(fixture_name) is not None
+        is_protein_tcf = PROTEIN_TCF_FIXTURE_PATTERN.match(fixture_name) is not None
+        is_cuco_fair = CUCO_FAIR_FPR_PATTERN.match(fixture_name) is not None
+        is_cuckoo_fair = CUCKOO_FAIR_FPR_PATTERN.match(fixture_name) is not None
+        is_gqf_fair = GQF_FAIR_FPR_PATTERN.match(fixture_name) is not None
+        is_tcf_fair = TCF_FAIR_FPR_PATTERN.match(fixture_name) is not None
+        is_gcf_fair = GCF_FAIR_FPR_PATTERN.match(fixture_name) is not None
+        is_bbf_fair = BBF_FAIR_FPR_PATTERN.match(fixture_name) is not None
 
-        if is_gpu or is_cpu or is_cuco:
+        if (
+            is_gpu
+            or is_cpu
+            or is_cuco
+            or is_cuckoo
+            or is_gqf
+            or is_tcf
+            or is_protein_gqf
+            or is_protein_tcf
+            or is_cuco_fair
+            or is_cuckoo_fair
+            or is_gqf_fair
+            or is_tcf_fair
+            or is_gcf_fair
+            or is_bbf_fair
+        ):
             if operation.upper() != "FPR":
                 return None
 
@@ -95,18 +144,53 @@ def extract_filter_series(name: str, row: pd.Series) -> Optional[tuple[str, str,
                 display_name = f"{pu.get_filter_display_name('cusbf')} (s={cusbf_variant})"
                 return series_key, "cusbf", display_name
 
-            if is_cuco:
+            if is_cuco or is_cuco_fair or is_bbf_fair:
                 return (
                     "cucobloom",
                     "cucobloom",
                     pu.get_filter_display_name("cucobloom"),
                 )
 
+            if is_cuckoo or is_cuckoo_fair or is_gcf_fair:
+                return (
+                    "cuckoogpu",
+                    "cuckoogpu",
+                    pu.get_filter_display_name("cuckoogpu"),
+                )
+
+            if is_gqf or is_gqf_fair:
+                return ("gqf", "gqf", pu.get_filter_display_name("gqf"))
+
+            if is_tcf or is_tcf_fair:
+                return ("tcf", "tcf", pu.get_filter_display_name("tcf"))
+
+            if is_protein_gqf:
+                return (
+                    "proteingqf",
+                    "proteingqf",
+                    pu.get_filter_display_name("proteingqf"),
+                )
+
+            if is_protein_tcf:
+                return (
+                    "proteintcf",
+                    "proteintcf",
+                    pu.get_filter_display_name("proteintcf"),
+                )
+
     return None
 
 
+def parse_s_from_series_key(filter_type: str) -> Optional[int]:
+    """Extract blocked-window ``s`` from a cuSBF series key like ``cusbf_s30``."""
+    match = re.search(r"_s(\d+)$", filter_type)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
 def get_plot_style(filter_type: str, base_filter: str) -> dict[str, str]:
-    """Get style for a filter series, including cuSBF variant styling."""
+    """Style a series; cuSBF/superbloom_cpu s-variants share colour, differ by marker."""
     style = dict(
         pu.FILTER_STYLES.get(
             filter_type,
@@ -114,16 +198,12 @@ def get_plot_style(filter_type: str, base_filter: str) -> dict[str, str]:
         )
     )
 
-    if base_filter in ("cusbf", "superbloom_cpu") and re.search(r"_s(\d+)$", filter_type):
-        variant_match = re.search(r"_s(\d+)$", filter_type)
-        if variant_match is not None:
-            variant_index = int(variant_match.group(1))
-            style["marker"] = CUSBF_VARIANT_MARKERS[
-                variant_index % len(CUSBF_VARIANT_MARKERS)
-            ]
-            style["linestyle"] = CUSBF_VARIANT_LINESTYLES[
-                variant_index % len(CUSBF_VARIANT_LINESTYLES)
-            ]
+    if base_filter in ("cusbf", "superbloom_cpu"):
+        s_value = parse_s_from_series_key(filter_type)
+        if s_value is not None:
+            style["marker"] = CUSBF_S_MARKERS.get(s_value, DEFAULT_CUSBF_S_MARKER)
+            style["linestyle"] = "-"
+            style["color"] = pu.FILTER_STYLES[base_filter]["color"]
 
     return style
 
@@ -158,7 +238,9 @@ def main(
     ),
 ):
     """
-    Parse FPR benchmark CSV results and generate plots.
+    Plot FPR vs filter memory from gpu-filter-comparison (and related) CSV output.
+
+    cuSBF ``s`` variants share colour; marker shape encodes ``s``.
     """
     if not csv_file.exists():
         typer.secho(f"CSV file not found: {csv_file}", fg=typer.colors.RED, err=True)
@@ -233,7 +315,7 @@ def main(
         )
 
     ax.set_xlabel(
-        "Sequence length [bases]", fontsize=pu.AXIS_LABEL_FONT_SIZE, fontweight="bold"
+        "Filter memory [bytes]", fontsize=pu.AXIS_LABEL_FONT_SIZE, fontweight="bold"
     )
     ax.set_ylabel(
         "False Positive Rate [%]", fontsize=pu.AXIS_LABEL_FONT_SIZE, fontweight="bold"

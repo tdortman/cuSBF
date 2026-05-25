@@ -6,6 +6,7 @@ patch_files = [
     'gqf/fix-popcnt.patch',
     'gqf/fix-qf-malloc-device.patch',
     'gqf/rename-hash-functions.patch',
+    'gqf/fix-thrust-pair.patch',
 ]
 
 fs = import('fs')

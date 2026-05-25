@@ -4,18 +4,23 @@ cuco_dep = subproject('cuco').get_variable('cuco_dep')
 
 cuckoogpu_dep = subproject('cuckoogpu').get_variable('cuckoogpu_dep')
 
+gpu_filters_sp = subproject('gpu-filters')
+gqf_deps = gpu_filters_sp.get_variable('gqf_deps')
+gqf_dep = gqf_deps['16']
+tcf_dep = gpu_filters_sp.get_variable('tcf_dep')
+
 bench_deps = [benchmark_dep, cusbf_dep]
 
 superbloom_cpu_dep = subproject('superbloom-cpu').get_variable('superbloom_cpu_dep')
 
 benchmarks = {
-    'gpu-filter-comparison': {
-        'src': 'gpu_filter_comparison.cu',
-        'deps': [cuco_dep, cuckoogpu_dep],
+    'filter-comparison': {
+        'src': 'filter_comparison.cu',
+        'deps': [cuco_dep, cuckoogpu_dep, superbloom_cpu_dep, gqf_dep, tcf_dep],
     },
     'fpr-fastx-sweep': {
         'src': 'fpr_fastx_sweep.cu',
-        'deps': [cuco_dep, superbloom_cpu_dep],
+        'deps': [cuco_dep, cuckoogpu_dep, superbloom_cpu_dep, gqf_dep, tcf_dep],
     },
 }
 
@@ -53,12 +58,25 @@ if get_option('param_sweep').enabled()
     endforeach
 endif
 
+gqf_benchmark_link_args = ['-Xnvlink=--suppress-stack-size-warning']
+tcf_benchmark_cuda_args = ['-Xcompiler=-Wno-implicit-fallthrough']
+
 foreach name, config : benchmarks
+    link_args = []
+    extra_cuda_args = config.get('extra_args', [])
+    deps = config.get('deps', [])
+    if gqf_dep in deps
+        link_args += gqf_benchmark_link_args
+    endif
+    if tcf_dep in deps
+        extra_cuda_args += tcf_benchmark_cuda_args
+    endif
     executable(
         name,
         config['src'],
-        dependencies: bench_deps + config.get('deps', []),
-        cuda_args: cuda_args + config.get('extra_args', []),
+        dependencies: bench_deps + deps,
+        cuda_args: cuda_args + extra_cuda_args,
+        link_args: link_args,
         install: false,
     )
 endforeach
@@ -71,10 +89,3 @@ executable(
     install: false,
 )
 
-executable(
-    'cpu-filter-comparison',
-    'cpu_filter_comparison.cu',
-    dependencies: bench_deps + [superbloom_cpu_dep],
-    cuda_args: cuda_args,
-    install: false,
-)

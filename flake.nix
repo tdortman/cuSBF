@@ -45,6 +45,7 @@
               cuda_crt
               cuda_cudart
               cuda_cccl
+              cuda_profiler_api.include
 
               cuda_gdb.bin
               nsight_systems
@@ -132,6 +133,7 @@
                   - -G
                   - "-arch=*"
                   - "-Xfatbin*"
+                  - "-Xnvlink*"
                   - "-gencode*"
                   - "--generate-code*"
                   - "--generate-line-info"

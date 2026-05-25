@@ -51,8 +51,8 @@ def generate_plot(
     import matplotlib.pyplot as plt
 
     metrics = [
-        ("index_kmers_per_s", "Index Throughput", 1e9, "B k-mers/s"),
-        ("query_kmers_per_s", "Query Throughput", 1e9, "B k-mers/s"),
+        ("index_kmers_per_s", "Index Throughput", 1e9, "GKmer/s"),
+        ("query_kmers_per_s", "Query Throughput", 1e9, "GKmer/s"),
     ]
 
     available = [

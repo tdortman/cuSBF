@@ -20,9 +20,13 @@ FILTER_STYLES = {
     "superbloom_cpu": {"color": "#C0392B", "marker": "D"},
     "cucobloom": {"color": "#A23B72", "marker": "s"},
     "cuckoogpu": {"color": "#F18F01", "marker": "^"},
+    "gqf": {"color": "#6A994E", "marker": "v"},
+    "tcf": {"color": "#BC4749", "marker": "p"},
     "proteincusbf": {"color": "#4FA3C7", "marker": "o"},
     "proteincucobloom": {"color": "#C15A8E", "marker": "s"},
     "proteincuckoogpu": {"color": "#F5A623", "marker": "^"},
+    "proteingqf": {"color": "#8CB369", "marker": "v"},
+    "proteintcf": {"color": "#D66868", "marker": "p"},
 }
 
 FILTER_COLORS = {
@@ -30,9 +34,13 @@ FILTER_COLORS = {
     "superbloom_cpu": FILTER_STYLES["superbloom_cpu"]["color"],
     "cucobloom": FILTER_STYLES["cucobloom"]["color"],
     "cuckoogpu": FILTER_STYLES["cuckoogpu"]["color"],
+    "gqf": FILTER_STYLES["gqf"]["color"],
+    "tcf": FILTER_STYLES["tcf"]["color"],
     "proteincusbf": FILTER_STYLES["proteincusbf"]["color"],
     "proteincucobloom": FILTER_STYLES["proteincucobloom"]["color"],
     "proteincuckoogpu": FILTER_STYLES["proteincuckoogpu"]["color"],
+    "proteingqf": FILTER_STYLES["proteingqf"]["color"],
+    "proteintcf": FILTER_STYLES["proteintcf"]["color"],
 }
 
 FILTER_DISPLAY_NAMES = {
@@ -40,9 +48,13 @@ FILTER_DISPLAY_NAMES = {
     "superbloom_cpu": "CPU SuperBloom",
     "cucobloom": "GPU Blocked Bloom",
     "cuckoogpu": "Cuckoo-GPU",
+    "gqf": "GQF",
+    "tcf": "TCF",
     "proteincusbf": "cuSBF (Protein)",
     "proteincucobloom": "GPU Blocked Bloom (Protein)",
     "proteincuckoogpu": "Cuckoo-GPU (Protein)",
+    "proteingqf": "GQF (Protein)",
+    "proteintcf": "TCF (Protein)",
 }
 
 OPERATION_COLORS = {
@@ -66,8 +78,9 @@ LEGEND_FRAME_ALPHA = 0
 LEGEND_FRAME_ALPHA_SOLID = 0.9
 HATCHED_BAR_ALPHA = 0.7
 SCALING_BAR_ALPHA = 0.8
+# Benchmark items are k-mers; items_per_second / 1e9 gives GKmer/s.
 THROUGHPUT_SCALE = 1_000_000_000
-THROUGHPUT_LABEL = "Throughput [B elem/s]"
+THROUGHPUT_LABEL = "Throughput [GKmer/s]"
 
 
 def get_filter_display_name(filter_type: str) -> str:
@@ -113,9 +126,14 @@ def format_capacity_title(base_title: str, capacity: Optional[int]) -> str:
     return base_title
 
 
-def to_billion_elems_per_sec(items_per_second: float) -> float:
-    """Convert items-per-second throughput into billions of elements per second."""
+def to_gkmers_per_sec(items_per_second: float) -> float:
+    """Convert benchmark items_per_second (k-mers/s) to GKmer/s."""
     return float(items_per_second) / THROUGHPUT_SCALE
+
+
+def to_billion_elems_per_sec(items_per_second: float) -> float:
+    """Deprecated alias for :func:`to_gkmers_per_sec`."""
+    return to_gkmers_per_sec(items_per_second)
 
 
 def load_csv(csv_path: Path) -> pd.DataFrame:
@@ -352,10 +370,15 @@ def normalize_benchmark_name(name: str) -> str:
 def parse_fixture_benchmark_name(name: str) -> Optional[tuple[str, str, int]]:
     """Parse benchmark names in fixture format.
 
-    Expected format: ``<FixtureName>/<Operation>/<Size>/...``
+    Supported formats:
+
+    - Memory sweep: ``<FixtureName>/<Operation>/<Size>/...`` (``Size`` is digits)
+    - FASTX throughput/FPR: ``<FixtureName>/<Operation>/iterations:.../...``
+      (no numeric size segment; size is returned as ``0``)
+
     Examples:
         ``GCFFixture/Insert/65536/...``
-        ``BCHTFixture/Query/1048576/...``
+        ``CucoBloomFixture/Insert/iterations:10/repeats:5/manual_time_median``
 
     Args:
         name: Raw benchmark name from Google Benchmark CSV.
@@ -366,21 +389,21 @@ def parse_fixture_benchmark_name(name: str) -> Optional[tuple[str, str, int]]:
         ``Fixture`` suffix and optional numeric postfix.
     """
     parts = name.split("/")
-    if len(parts) < 3:
+    if len(parts) < 2:
         return None
 
     first_part = parts[0].strip('"')
     operation = parts[1]
-    size_str = parts[2]
-
-    if not size_str.isdigit():
-        return None
 
     fixture_match = re.match(r"^(?P<base>.+?)Fixture\d*$", first_part)
     if fixture_match is None:
         return None
 
-    return fixture_match.group("base").lower(), operation, int(size_str)
+    size = 0
+    if len(parts) >= 3 and parts[2].isdigit():
+        size = int(parts[2])
+
+    return fixture_match.group("base").lower(), operation, size
 
 
 def clustered_bar_chart(
@@ -391,6 +414,7 @@ def clustered_bar_chart(
     colors: dict[str, str],
     bar_width: float = 0.25,
     group_stride: Optional[float] = None,
+    category_stride: float = 1.0,
     show_values: bool = True,
     value_decimals: int = 0,
     hatches: Optional[dict[str, str]] = None,
@@ -410,6 +434,7 @@ def clustered_bar_chart(
         colors: Dict mapping group names to colors
         bar_width: Width of each bar
         group_stride: Distance between adjacent groups inside each category
+        category_stride: Distance between category clusters on the x-axis (default 1.0)
         show_values: Whether to show values on top of bars
         value_decimals: Number of decimal places for bar value labels
         hatches: Optional dict mapping group names to hatch patterns
@@ -424,7 +449,7 @@ def clustered_bar_chart(
             linestyle, zorder.
     """
     n_groups = len(groups)
-    x_positions = range(len(categories))
+    x_positions = [i * category_stride for i in range(len(categories))]
     cluster_stride = bar_width if group_stride is None else group_stride
     active_series = (
         series
