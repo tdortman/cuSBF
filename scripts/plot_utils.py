@@ -17,7 +17,7 @@ import typer
 
 FILTER_STYLES = {
     "cusbf": {"color": "#2E86AB", "marker": "o"},
-    "superbloom_cpu": {"color": "#C0392B", "marker": "D"},
+    "superbloom_cpu": {"color": "#7B4397", "marker": "D"},
     "cucobloom": {"color": "#A23B72", "marker": "s"},
     "cuckoogpu": {"color": "#F18F01", "marker": "^"},
     "gqf": {"color": "#6A994E", "marker": "v"},
@@ -424,6 +424,7 @@ def clustered_bar_chart(
     category_stride: float = 1.0,
     show_values: bool = True,
     value_decimals: int = 0,
+    value_fontsize: Optional[float] = None,
     hatches: Optional[dict[str, str]] = None,
     alphas: Optional[dict[str, float]] = None,
     labels: Optional[dict[str, str]] = None,
@@ -444,6 +445,7 @@ def clustered_bar_chart(
         category_stride: Distance between category clusters on the x-axis (default 1.0)
         show_values: Whether to show values on top of bars
         value_decimals: Number of decimal places for bar value labels
+        value_fontsize: Font size for bar value labels (default: BAR_FONT_SIZE)
         hatches: Optional dict mapping group names to hatch patterns
         alphas: Optional dict mapping group names to alpha values
         labels: Optional dict mapping group names to display labels for legend
@@ -466,19 +468,27 @@ def clustered_bar_chart(
         else []
     )
 
+    bar_label_fontsize = BAR_FONT_SIZE if value_fontsize is None else value_fontsize
+
+    log_y = ax.get_yscale() == "log"
+
     def annotate_bars(bars, values):
         if not show_values:
             return
         for bar, val in zip(bars, values):
             if val > 0:
+                y = bar.get_height()
+                if log_y:
+                    y *= 1.04
                 ax.text(
                     bar.get_x() + bar.get_width() / 2,
-                    bar.get_height(),
+                    y,
                     f"{val:.{value_decimals}f}",
                     ha="center",
                     va="bottom",
-                    fontsize=BAR_FONT_SIZE,
+                    fontsize=bar_label_fontsize,
                     fontweight="bold",
+                    clip_on=False,
                 )
 
     for i, group in enumerate(groups):
