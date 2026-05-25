@@ -2,13 +2,8 @@
 
 #include <cuda/__cmath/ceil_div.h>
 #include <cuda_runtime.h>
-#include <thrust/copy.h>
-#include <thrust/count.h>
 #include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>
-#include <thrust/reduce.h>
-#include <thrust/transform.h>
-#include <cuda/std/functional>
 
 #include <algorithm>
 #include <cmath>
@@ -39,12 +34,29 @@ inline size_t gqfFilterBytes(const QF* devQf) {
     return metadata.total_size_in_bytes;
 }
 
+namespace detail {
+
+__global__ void convertGqfResultsKernel(uint64_t* data, size_t count) {
+    const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (idx < count) {
+        data[idx] = data[idx] > 0 ? 1ULL : 0ULL;
+    }
+}
+
+}  // namespace detail
+
 inline void convertGqfResults(thrust::device_vector<uint64_t>& results) {
-    thrust::transform(
-        results.begin(), results.end(), results.begin(), [] __device__(uint64_t value) {
-            return value > 0 ? 1ULL : 0ULL;
-        }
-    );
+    const size_t count = results.size();
+    if (count == 0) {
+        return;
+    }
+    uint64_t* data = thrust::raw_pointer_cast(results.data());
+    constexpr unsigned kBlockSize = 256;
+    const unsigned grid =
+        static_cast<unsigned>((count + kBlockSize - 1) / kBlockSize);
+    detail::convertGqfResultsKernel<<<grid, kBlockSize>>>(data, count);
+    CUSBF_CUDA_CALL(cudaGetLastError());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
 
 inline uint32_t gqfExponent(uint64_t minCapacity) {
@@ -325,6 +337,7 @@ struct TcfHandle {
             bulkQueryPrepared(n);
         }
     }
+
 };
 
 inline void copyPackedKmers(
@@ -344,5 +357,6 @@ inline void gqfBulkGet(GqfHandle& handle, uint64_t count, uint64_t* keys, uint64
     bulk_get(handle.filter, count, keys, results);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
+
 
 }  // namespace gpu_filter_gqf_tcf
