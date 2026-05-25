@@ -196,6 +196,9 @@ def _plot_unified(df, output_dir: Path) -> None:
         ax.set_ylim(0, 105)
         ax.grid(True, which="both", ls="--", alpha=pu.GRID_ALPHA)
 
+    for ax in axes[0]:
+        ax.tick_params(axis="x", labelbottom=True)
+
     plt.tight_layout(rect=(0.08, 0.04, 1, 0.88))
     _add_shared_y_label(fig, axes, "Throughput (% of Peak)")
     _add_shared_x_label(fig, axes, X_AXIS_LABEL)
