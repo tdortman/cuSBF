@@ -36,10 +36,10 @@ app = typer.Typer(
 # Left-to-right bar order; short legend keys.
 FILTER_GROUP_ORDER: list[str] = [
     "cusbf",
-    "cuckoogpu",
-    "tcf",
-    "gqf",
     "cucobloom",
+    "cuckoogpu",
+    "gqf",
+    "tcf",
     "superbloom_cpu",
 ]
 
@@ -69,9 +69,13 @@ _DDR5_EDGE_COLOR = "#1F2937"
 _X_AXIS_MARGIN_LEFT = _PAIRED_BAR_WIDTH
 _X_AXIS_MARGIN_RIGHT = _PAIRED_BAR_WIDTH
 _SUBPLOT_FIGSIZE = (7.2, 3.0)
+_SUBPLOT_LEFT_MARGIN = 0.16
+_SUBPLOT_RIGHT_MARGIN = 0.99
 _YLIM_TOP_FACTOR = 1.45
 _OUTPUT_BASENAME = "benchmark_throughput_comparison"
 _DDR5_CPU_FILTER = "superbloom_cpu"
+_SUBPLOT_BOTTOM_MARGIN = 0.06
+_SUBPLOT_TOP_MARGIN = 0.94
 
 
 def normalize_filter_key(fixture_base: str) -> str:
@@ -377,9 +381,18 @@ def save_bar_subplot(
         ddr5_filters=ddr5_filters,
     )
     ax.set_ylim(*expand_throughput_ylim(ylim))
-    left_margin = 0.16 if show_ylabel else 0.07
-    fig.subplots_adjust(left=left_margin, right=0.99, bottom=0.14, top=0.94)
-    fig.savefig(output_path, transparent=True, format="pdf", dpi=600)
+    fig.subplots_adjust(
+        left=_SUBPLOT_LEFT_MARGIN,
+        right=_SUBPLOT_RIGHT_MARGIN,
+        bottom=_SUBPLOT_BOTTOM_MARGIN,
+        top=_SUBPLOT_TOP_MARGIN,
+    )
+    fig.savefig(
+        output_path,
+        transparent=True,
+        format="pdf",
+        dpi=600,
+    )
     typer.secho(message, fg=typer.colors.GREEN)
     plt.close(fig)
     return legend_patches

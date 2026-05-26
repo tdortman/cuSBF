@@ -19,34 +19,44 @@ It exploits the streaming nature of sequence-derived k-mers by using **minimizer
 
 ## Performance
 
-Benchmarks (`Config<31, 28, 16, 4>`) comparing cuSBF against NVIDIA's [cuco](https://github.com/NVIDIA/cuCollections) `bloom_filter` on an NVIDIA RTX PRO 6000 Blackwell GPU with random DNA sequence inputs. Throughput is reported in billions of k-mers per second (Gk-mers/s). Timings include GPU-side sequence encoding for cuco, so both methods consume the same input sequence.
+Benchmarks use `Config<31, 28, 16, 4>` on an NVIDIA RTX PRO 6000 Blackwell GPU. CPU Super Bloom runs on an Intel Xeon W9-3595X with 120 threads.
 
-| Dataset Size | Operation | cuSBF          | cuco Bloom     | Speed-up |
-| ------------ | --------- | -------------- | -------------- | -------- |
-| ~4M k-mers   | Insert    | 62.9 Gk-mers/s | 31.5 Gk-mers/s | 2.0×     |
-| ~4M k-mers   | Query     | 109 Gk-mers/s  | 44.2 Gk-mers/s | 2.5×     |
-| ~268M k-mers | Insert    | 46.6 Gk-mers/s | 5.9 Gk-mers/s  | 7.9×     |
-| ~268M k-mers | Query     | 101 Gk-mers/s  | 13.2 Gk-mers/s | 7.7×     |
+Compared against:
 
-The findere scheme (s-mer width) provides strong false-positive reduction at equivalent memory. For `Config<31, 28, 16, 4>` on ~4.6M inserted k-mers queried against 10⁹ random k-mers:
+- [CPU Super Bloom](https://github.com/EtienneC-K/SuperBloom)
+- [GPU Blocked Bloom filter (GBBF)](https://github.com/NVIDIA/cuCollections)
+- [GPU Cuckoo-GPU](https://github.com/tdortman/Cuckoo-GPU)
+- [GPU Bulk Two-Choice Filter (TCF)](https://github.com/saltsystemslab/gpu-filters/tree/main/bulk-tcf)
+- [GPU Counting Quotient Filter (GQF)](https://github.com/saltsystemslab/gpu-filters/tree/main/gqf)
 
-| Bits/k-mer | cuSBF FPR | cuco Bloom FPR |
-| ---------- | --------- | -------------- |
-| 58         | 0.0035%   | 0.064%         |
-| 116        | 0.00036%  | 0.017%         |
-| 231        | 0.000092% | 0.0054%        |
+### Smaller Filter (_C. elegans_, ~100M k-mers)
 
-Benchmarks can be reproduced with:
+| Comparison           | Insert      | Query       |
+| -------------------- | ----------- | ----------- |
+| cuSBF vs Super Bloom | 92× faster  | 234× faster |
+| cuSBF vs GBBF        | 9.1× faster | 7.7× faster |
+| cuSBF vs Cuckoo-GPU  | 80× faster  | 8.0× faster |
+| cuSBF vs TCF         | 12× faster  | 52× faster  |
+| cuSBF vs GQF         | 69× faster  | 13× faster  |
 
-```bash
-# Throughput on one FASTX file (~16 bits/item)
-./build/benchmarks/gpu-filter-comparison --insert-fastx=reads.fa --benchmark_filter="Fixture/(Insert|Query)"
-./scripts/compare_filters.py results.csv -o build
+### Large Filter (CHM13, ~3.1B k-mers)
 
-# FPR: real FASTX insert, 1B random k-mer queries, line plot (filter size vs hits)
-./build/benchmarks/gpu-filter-fpr-fastx --insert-fastx=reads.fa
-./scripts/plot_fpr_fastx.py results.csv -o build
-```
+| Comparison           | Insert       | Query       |
+| -------------------- | ------------ | ----------- |
+| cuSBF vs Super Bloom | 59× faster   | 165× faster |
+| cuSBF vs GBBF        | 8.2× faster  | 7.6× faster |
+| cuSBF vs Cuckoo-GPU  | 3427× faster | 7.8× faster |
+| cuSBF vs TCF         | 12× faster   | 67× faster  |
+| cuSBF vs GQF         | 42× faster   | 11× faster  |
+
+### False Positive Rate
+
+| Bits/k-mer | cuSBF `s=28` | cuSBF `s=30` | cuSBF `s=31` | GBBF    |
+| ---------- | ------------ | ------------ | ------------ | ------- |
+| 21.4       | 0.848%       | 0.951%       | 1.593%       | 3.069%  |
+| 85.7       | 0.091%       | 0.107%       | 0.210%       | 0.126%  |
+| 342.6      | 0.0095%      | 0.0114%      | 0.0264%      | 0.0273% |
+
 
 ## Requirements
 
@@ -108,10 +118,10 @@ meson setup build -Dparam_sweep=enabled -Dparam_sweep_alphabet=protein
 
 Fallible APIs return `cusbf::Result<T>` (a thin wrapper over `cuda::std::expected<T, Error>`). Use `return Err(error)` (`cuda::std::unexpected<Error>`, deduces `Result<T>`) or `return Ok()` / `return {}` for `Result<void>`. For success with a value, `return value` is enough. Two helpers unwrap results:
 
-| Macro                | On failure                                                            | Use when                                                          |
-| -------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Macro                | On failure                                                                                        | Use when                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | `CUSBF_TRY(expr)`    | Copies the error, then `return cuda::std::unexpected<Error>(...)` from the **enclosing** function | The caller returns `Result` (library glue, `examples/cusbf-main`) |
-| `CUSBF_UNWRAP(expr)` | `throw std::runtime_error(message())`                                 | Tests, `main`, or other code that does not return `Result`        |
+| `CUSBF_UNWRAP(expr)` | `throw std::runtime_error(message())`                                                             | Tests, `main`, or other code that does not return `Result`        |
 
 Both work as statements or in initializers (`auto x = CUSBF_UNWRAP(...)`). For full control (typed errors, exit codes), use `if (!result)` instead.
 
