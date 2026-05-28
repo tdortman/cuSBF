@@ -37,6 +37,100 @@ struct RecordBatchView {
     cuda::std::span<const RecordRange> records{};
 };
 
+/**
+ * @brief Accumulates parsed FASTX records into a dense @ref RecordBatchView.
+ *
+ * Payloads are stored back-to-back without alphabet separators. Normalization
+ * (separator injection and per-record metadata) is performed separately via
+ * @ref normalize_record_batch_into.
+ */
+class DenseRecordBatchBuilder {
+   public:
+    explicit DenseRecordBatchBuilder(uint64_t reserve_bytes = 0) {
+        if (reserve_bytes != 0) {
+            sequence_.reserve(static_cast<size_t>(reserve_bytes));
+        }
+    }
+
+    /// @brief Dense sequence buffer backing @ref view (owned or mmap-external).
+    [[nodiscard]] std::string_view sequence_view() const noexcept {
+        return external_sequence_.empty() ? std::string_view{sequence_} : external_sequence_;
+    }
+
+    /// @brief Non-owning @ref RecordBatchView over the accumulated records.
+    [[nodiscard]] RecordBatchView view() const noexcept {
+        return RecordBatchView{
+            sequence_view(),
+            cuda::std::span<const RecordRange>{ranges_.data(), ranges_.size()},
+        };
+    }
+
+    /// @brief Appends one record payload and records its byte range.
+    void appendRecord(std::string_view record_sequence) {
+        ranges_.push_back(
+            RecordRange{
+                static_cast<uint64_t>(sequence_.size()),
+                static_cast<uint64_t>(record_sequence.size()),
+            }
+        );
+        sequence_.append(record_sequence);
+    }
+
+    /// @brief Records a range already present in @ref sequence_view.
+    void push_range(RecordRange range) {
+        ranges_.push_back(range);
+    }
+
+    [[nodiscard]] std::string& sequence_buffer() noexcept {
+        return sequence_;
+    }
+
+    [[nodiscard]] std::string_view& external_sequence_slot() noexcept {
+        return external_sequence_;
+    }
+
+    [[nodiscard]] bool empty() const noexcept {
+        return ranges_.empty();
+    }
+
+    [[nodiscard]] uint64_t recordCount() const noexcept {
+        return static_cast<uint64_t>(ranges_.size());
+    }
+
+    /// @brief Sum of record payload bytes (ignores mmap storage outside ranges).
+    [[nodiscard]] uint64_t raw_sequence_bytes() const noexcept {
+        if (!external_sequence_.empty()) {
+            uint64_t total = 0;
+            for (const RecordRange& range : ranges_) {
+                total += range.sequenceBytes;
+            }
+            return total;
+        }
+        return static_cast<uint64_t>(sequence_.size());
+    }
+
+    [[nodiscard]] const std::vector<RecordRange>& ranges() const noexcept {
+        return ranges_;
+    }
+
+    void clear() {
+        sequence_.clear();
+        ranges_.clear();
+        external_sequence_ = {};
+    }
+
+    void clear_and_shrink() {
+        clear();
+        std::string{}.swap(sequence_);
+        std::vector<RecordRange>{}.swap(ranges_);
+    }
+
+   private:
+    std::string sequence_;
+    std::string_view external_sequence_{};
+    std::vector<RecordRange> ranges_;
+};
+
 /// @brief Per-record query payload emitted by query_record_batch().
 struct RecordQueryView {
     /// Index in the source batch.
@@ -126,9 +220,10 @@ struct FastxDetailedQueryReport {
  * Must accept `const RecordQueryView&` and return void. The @ref RecordQueryView::hits span is
  * valid only for the duration of the call.
  */
-template <typename F>
-concept RecordQueryConsumer = std::invocable<F, const RecordQueryView&> &&
-                              std::same_as<std::invoke_result_t<F, const RecordQueryView&>, void>;
+template <typename Functor>
+concept RecordQueryConsumer = requires(Functor f, const RecordQueryView& view) {
+    { f(view) } -> std::same_as<void>;
+};
 
 /**
  * @brief Callable invoked once per record by @ref Filter::query_fastx_records and related FASTX
@@ -137,9 +232,10 @@ concept RecordQueryConsumer = std::invocable<F, const RecordQueryView&> &&
  * Must accept `const FastxRecordView&` and return void. The @ref FastxRecordView::hits span is
  * valid only for the duration of the call.
  */
-template <typename F>
-concept FastxRecordConsumer = std::invocable<F, const FastxRecordView&> &&
-                              std::same_as<std::invoke_result_t<F, const FastxRecordView&>, void>;
+template <typename Functor>
+concept FastxRecordConsumer = requires(Functor f, const FastxRecordView& record) {
+    { f(record) } -> std::same_as<void>;
+};
 
 namespace detail {
 

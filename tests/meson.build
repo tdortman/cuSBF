@@ -8,6 +8,7 @@ test_exe = executable(
         'test_bloom_filter.cu',
         'test_fastx.cu',
         'test_fastx_chunk.cpp',
+        'test_dense_record_batch.cpp',
         'test_fastx_dispatch.cpp',
         'test_fastx_host_limits.cpp',
         'test_normalized_record_batch.cpp',
