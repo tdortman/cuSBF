@@ -51,7 +51,7 @@ FILTER_DISPLAY_NAMES = {
     "gqf": "GQF",
     "tcf": "TCF",
     "proteincusbf": "cuSBF (Protein)",
-    "proteincucobloom": "GPU Blocked Bloom (Protein)",
+    "proteincucobloom": "GBBF (Protein)",
     "proteincuckoogpu": "Cuckoo-GPU (Protein)",
     "proteingqf": "GQF (Protein)",
     "proteintcf": "TCF (Protein)",

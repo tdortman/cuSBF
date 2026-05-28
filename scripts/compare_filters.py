@@ -12,8 +12,8 @@
 Small workload: C. elegans reference genome (left subplot).
 Large workload: human T2T-CHM13 reference genome (right subplot).
 
-Each subplot combines three memory-system CSVs (HBM3 + GDDR7 paired bars;
-Super Bloom CPU from DDR5 as a single dashed-edge series).
+Each subplot combines three memory-system CSVs (GH200 (HBM3) + RTX PRO 6000 (GDDR7)
+paired bars; Super Bloom CPU from W9-3595X (DDR5) as a single dashed-edge series).
 """
 
 from __future__ import annotations
@@ -66,6 +66,9 @@ _GDDR7_PAIRED_ALPHA_SCALE = 0.55
 _GDDR7_PAIRED_ALPHA_FLOOR = 0.35
 _DDR5_ALPHA = 0.75
 _DDR5_EDGE_COLOR = "#1F2937"
+_HBM3_LEGEND_LABEL = "GH200 (HBM3)"
+_GDDR7_LEGEND_LABEL = "RTX PRO 6000 (GDDR7)"
+_DDR5_LEGEND_LABEL = "W9-3595X (DDR5)"
 _X_AXIS_MARGIN_LEFT = _PAIRED_BAR_WIDTH
 _X_AXIS_MARGIN_RIGHT = _PAIRED_BAR_WIDTH
 _SUBPLOT_FIGSIZE = (7.2, 3.0)
@@ -330,7 +333,7 @@ def plot_bar_on_axis(
                 edgecolor="black",
                 linewidth=pu.BAR_EDGE_WIDTH,
                 alpha=1.0,
-                label="HBM3",
+                label=_HBM3_LEGEND_LABEL,
             )
         )
         if has_bg:
@@ -341,7 +344,7 @@ def plot_bar_on_axis(
                     edgecolor="#666666",
                     linewidth=pu.BAR_EDGE_WIDTH,
                     alpha=gddr_alpha,
-                    label="GDDR7",
+                    label=_GDDR7_LEGEND_LABEL,
                 )
             )
         if has_ddr5:
@@ -352,7 +355,7 @@ def plot_bar_on_axis(
                     linewidth=pu.BAR_EDGE_WIDTH,
                     linestyle="--",
                     alpha=_DDR5_ALPHA,
-                    label="DDR5",
+                    label=_DDR5_LEGEND_LABEL,
                 )
             )
 
@@ -422,22 +425,23 @@ def save_bar_legend_figure(
             ncol=len(filter_handles),
             framealpha=pu.LEGEND_FRAME_ALPHA,
         )
-    if op_handles:
-        fig.legend(
-            handles=op_handles,
-            fontsize=pu.LEGEND_FONT_SIZE,
-            loc="upper center",
-            bbox_to_anchor=(0.5, legend_y_top - legend_row_step),
-            ncol=len(op_handles),
-            framealpha=pu.LEGEND_FRAME_ALPHA,
-        )
     if mem_handles:
         fig.legend(
             handles=mem_handles,
             fontsize=pu.LEGEND_FONT_SIZE,
             loc="upper center",
-            bbox_to_anchor=(0.5, legend_y_top - (2 * legend_row_step)),
+            bbox_to_anchor=(0.5, legend_y_top - legend_row_step),
             ncol=len(mem_handles),
+            framealpha=pu.LEGEND_FRAME_ALPHA,
+        )
+    if op_handles:
+        op_legend_y = legend_y_top - (2 * legend_row_step if mem_handles else legend_row_step)
+        fig.legend(
+            handles=op_handles,
+            fontsize=pu.LEGEND_FONT_SIZE,
+            loc="upper center",
+            bbox_to_anchor=(0.5, op_legend_y),
+            ncol=len(op_handles),
             framealpha=pu.LEGEND_FRAME_ALPHA,
         )
 
@@ -473,7 +477,7 @@ def build_memory_legend_handles(has_bg: bool, has_ddr5: bool) -> list[Patch]:
                 edgecolor="black",
                 linewidth=pu.BAR_EDGE_WIDTH,
                 alpha=1.0,
-                label="HBM3",
+                label=_HBM3_LEGEND_LABEL,
             )
         )
     if has_bg:
@@ -484,7 +488,7 @@ def build_memory_legend_handles(has_bg: bool, has_ddr5: bool) -> list[Patch]:
                 edgecolor="#666666",
                 linewidth=pu.BAR_EDGE_WIDTH,
                 alpha=gddr_alpha,
-                label="GDDR7",
+                label=_GDDR7_LEGEND_LABEL,
             )
         )
     if has_ddr5:
@@ -495,7 +499,7 @@ def build_memory_legend_handles(has_bg: bool, has_ddr5: bool) -> list[Patch]:
                 linewidth=pu.BAR_EDGE_WIDTH,
                 linestyle="--",
                 alpha=_DDR5_ALPHA,
-                label="DDR5",
+                label=_DDR5_LEGEND_LABEL,
             )
         )
     return mem_handles
@@ -536,27 +540,27 @@ def prepare_panel(
 def main(
     csv_gddr7_small: Path = typer.Argument(
         ...,
-        help="GDDR7 throughput CSV for C. elegans (small filter)",
+        help="RTX PRO 6000 (GDDR7) throughput CSV for C. elegans (small filter)",
     ),
     csv_gddr7_large: Path = typer.Argument(
         ...,
-        help="GDDR7 throughput CSV for human T2T-CHM13 (large filter)",
+        help="RTX PRO 6000 (GDDR7) throughput CSV for human T2T-CHM13 (large filter)",
     ),
     csv_hbm3_small: Path = typer.Argument(
         ...,
-        help="HBM3 throughput CSV for C. elegans (small filter)",
+        help="GH200 (HBM3) throughput CSV for C. elegans (small filter)",
     ),
     csv_hbm3_large: Path = typer.Argument(
         ...,
-        help="HBM3 throughput CSV for human T2T-CHM13 (large filter)",
+        help="GH200 (HBM3) throughput CSV for human T2T-CHM13 (large filter)",
     ),
     csv_ddr5_small: Path = typer.Argument(
         ...,
-        help="DDR5 throughput CSV for C. elegans (Super Bloom CPU)",
+        help="W9-3595X (DDR5) throughput CSV for C. elegans (Super Bloom CPU)",
     ),
     csv_ddr5_large: Path = typer.Argument(
         ...,
-        help="DDR5 throughput CSV for human T2T-CHM13 (Super Bloom CPU)",
+        help="W9-3595X (DDR5) throughput CSV for human T2T-CHM13 (Super Bloom CPU)",
     ),
     output_dir: Optional[Path] = typer.Option(
         None,
@@ -568,8 +572,8 @@ def main(
     """
     Plot Insert/Query throughput [GKmer/s].
 
-    Combines six benchmark CSVs (GDDR7/HBM3/DDR5 × small/large) into two
-    subplot PDFs plus a legend PDF.
+    Combines six benchmark CSVs (RTX PRO 6000/GH200/W9-3595X × small/large) into
+    two subplot PDFs plus a legend PDF.
     """
     hbm3_small, gddr7_small, single_left, ddr5_left = prepare_panel(
         csv_hbm3_small, csv_gddr7_small, csv_ddr5_small
