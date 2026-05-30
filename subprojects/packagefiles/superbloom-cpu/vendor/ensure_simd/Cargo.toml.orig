@@ -1,0 +1,16 @@
+[package]
+name = "ensure_simd"
+version = "0.1.0"
+edition = "2024"
+authors = ["Ragnar Groot Koerkamp"]
+description = "Compile-time check whether NEON or AVX2 is enabled"
+repository = "https://github.com/RagnarGrootKoerkamp/ensure_simd"
+license = "MIT"
+readme = "README.md"
+categories = ["hardware-support", "rust-patterns"]
+keywords = ["simd", "target-feature", "target-cpu", "avx2"]
+
+
+[features]
+# Ignore the AVX2 check, and build with less optimized code.
+scalar = []

@@ -1,0 +1,59 @@
+[package]
+name = "needletail"
+version = "0.6.3"
+authors = ["Roderick Bovee <rbovee@gmail.com>", "Vincent Prouillet <vincent@onecodex.com>"]
+description = "FASTX parsing and k-mer methods"
+keywords = ["FASTA", "FASTQ", "kmer", "bioinformatics"]
+categories = ["science", "parsing"]
+repository = "https://github.com/onecodex/needletail"
+license = "MIT"
+readme = "./README.md"
+edition = "2021"
+include = ["src/**/*", "tests/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+bench = false
+
+[features]
+default = ["compression"]
+compression = ["bzip2", "flate2", "xz2", "zstd"]
+python = ["pyo3/extension-module"]
+python_test = ["pyo3"]
+xz2 = ["liblzma"]
+
+[dependencies]
+buffer-redux = { version = "1", default-features = false }
+bytecount = { version = "0.6", features = ["runtime-dispatch-simd"] }
+bzip2 = { version = "0.4", optional = true }
+flate2 = { version = "1.0.30", optional = true }
+memchr = "2.7.2"
+pyo3 = { version = "0.21.2", optional = true }
+liblzma = { version = "0.3.1", optional = true }
+zstd = { version = "0.13.2", optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+
+# for stdin test
+assert_cmd = "2"
+escargot = "0.5.0"
+predicates = "3"
+tempfile = "3"
+
+# for benchmark comparisons
+bio = "1"
+seq_io = "0.3"
+
+# for testing with the FormatSpecimens.jl repo samples
+serde = "1.0"
+serde_derive = "1.0"
+toml = "0.8"
+
+[profile.release]
+lto = true
+
+[[bench]]
+name = "benchmark"
+harness = false
+path = "benches/benchmark.rs"
