@@ -46,6 +46,7 @@
               cuda_cudart
               cuda_cccl
               cuda_profiler_api.include
+              cuda_cuobjdump
 
               cuda_gdb.bin
               nsight_systems
@@ -100,6 +101,7 @@
 
             CPATH = lib.makeIncludePath [ cuda.path ];
             CUDA_HOME = cuda.path;
+            CARGO_NET_OFFLINE = true;
 
             LD_LIBRARY_PATH = "${
               lib.makeLibraryPath (buildInputs ++ nativeBuildInputs)
