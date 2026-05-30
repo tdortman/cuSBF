@@ -45,13 +45,13 @@ FILTER_COLORS = {
 
 FILTER_DISPLAY_NAMES = {
     "cusbf": "cuSBF",
-    "superbloom_cpu": "CPU SuperBloom",
-    "cucobloom": "GPU Blocked Bloom",
+    "superbloom_cpu": "Super Bloom",
+    "cucobloom": "GBBF",
     "cuckoogpu": "Cuckoo-GPU",
     "gqf": "GQF",
     "tcf": "TCF",
     "proteincusbf": "cuSBF (Protein)",
-    "proteincucobloom": "GPU Blocked Bloom (Protein)",
+    "proteincucobloom": "GBBF (Protein)",
     "proteincuckoogpu": "Cuckoo-GPU (Protein)",
     "proteingqf": "GQF (Protein)",
     "proteintcf": "TCF (Protein)",

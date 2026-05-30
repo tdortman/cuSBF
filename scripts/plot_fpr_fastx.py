@@ -100,6 +100,18 @@ def parse_s_from_series_key(filter_type: str) -> Optional[int]:
     return int(match.group(1)) if match else None
 
 
+
+
+def filter_size_bits(row: pd.Series) -> float | None:
+    """Allocated filter capacity in bits (x-axis)."""
+    filter_bits = row.get("filter_bits")
+    if pd.notna(filter_bits):
+        return float(filter_bits)
+    memory_bytes = row.get("memory_bytes")
+    if pd.notna(memory_bytes):
+        return float(memory_bytes) * 8.0
+    return None
+
 def get_plot_style(filter_type: str, base_filter: str) -> dict[str, str]:
     style = dict(
         pu.FILTER_STYLES.get(
@@ -160,13 +172,24 @@ def main(
         filter_display_names[filter_type] = display_name
         filter_base_types[filter_type] = base_filter_type
 
-        filter_bits = row.get("filter_bits")
+        size_bits = filter_size_bits(row)
         false_positives = row.get("false_positives")
-        if pd.notna(filter_bits) and pd.notna(false_positives):
-            fp_data[filter_type][float(filter_bits)] = float(false_positives)
+        if size_bits is not None and pd.notna(false_positives):
+            fp_data[filter_type][size_bits] = float(false_positives)
 
     if not fp_data:
         typer.secho("No false-positive data found in CSV", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    all_sizes = {x for sizes in fp_data.values() for x in sizes}
+    if len(all_sizes) <= 1:
+        only = next(iter(all_sizes)) if all_sizes else float("nan")
+        typer.secho(
+            f"Filter size is constant ({only:g} bits) across all series; "
+            "re-run gpu-filter-fpr-fastx (filter_bits_exp sweep 22–31) to plot FPR vs space.",
+            fg=typer.colors.RED,
+            err=True,
+        )
         raise typer.Exit(1)
 
     sorted_filters = sort_filters_by_descending_fp(dict(fp_data), filter_display_names)

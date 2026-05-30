@@ -14,6 +14,7 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import plot_utils as pu
 import typer
+from matplotlib.patches import Patch
 
 app = typer.Typer(help="Plot Speed of Light (SOL) benchmark results")
 
@@ -46,21 +47,17 @@ OPERATION_MARKERS = {
 }
 
 X_AXIS_LABEL = "Target Filter Capacity [k-mers]"
-SOL_MARKER_SIZE = pu.MARKER_SIZE - 3
+SOL_MARKER_SIZE = pu.MARKER_SIZE - 4
 SOL_LEGEND_MARKER_SIZE = pu.MARKER_SIZE - 2
 Y_AXIS_TICKS = [0, 25, 50, 75, 100]
 
 
 def _filter_legend_handles(filters: list[str]) -> list:
     return [
-        plt.Line2D(
-            [],
-            [],
-            color=pu.FILTER_STYLES[f]["color"],
-            marker=pu.FILTER_STYLES[f].get("marker", "o"),
-            linestyle="-",
-            linewidth=pu.LINE_WIDTH,
-            markersize=SOL_LEGEND_MARKER_SIZE,
+        Patch(
+            facecolor=pu.FILTER_STYLES[f]["color"],
+            edgecolor="black",
+            linewidth=pu.BAR_EDGE_WIDTH,
             label=pu.get_filter_display_name(f),
         )
         for f in filters
@@ -85,8 +82,10 @@ def _operation_legend_handles(operations: list[str]) -> list:
 def _add_comparison_legend(
     fig, axes, filters: list[str], operations: list[str]
 ) -> None:
-    """Place a compact filter/operation legend above the subplot grid."""
-    axes_box = axes[0][0].get_position()
+    """Place separated filter/operation legends above the subplot grid."""
+    legend_y = max(ax.get_position().y1 for ax in axes[0]) + 0.045
+    legend_left_x = min(ax.get_position().x0 for ax in axes[0])
+    legend_right_x = max(ax.get_position().x1 for ax in axes[0])
     legend_kw = dict(
         fontsize=pu.LEGEND_FONT_SIZE - 2,
         framealpha=pu.LEGEND_FRAME_ALPHA,
@@ -96,17 +95,27 @@ def _add_comparison_legend(
         handletextpad=0.5,
     )
 
-    legend_handles = _filter_legend_handles(filters) + _operation_legend_handles(
-        operations
-    )
-    fig.legend(
-        legend_handles,
-        [h.get_label() for h in legend_handles],
-        loc="lower center",
-        bbox_to_anchor=(0.5, axes_box.y1 + 0.032),
-        ncol=len(legend_handles),
-        **legend_kw,
-    )
+    filter_handles = _filter_legend_handles(filters)
+    if filter_handles:
+        fig.legend(
+            filter_handles,
+            [h.get_label() for h in filter_handles],
+            loc="lower left",
+            bbox_to_anchor=(legend_left_x, legend_y),
+            ncol=len(filter_handles),
+            **legend_kw,
+        )
+
+    operation_handles = _operation_legend_handles(operations)
+    if operation_handles:
+        fig.legend(
+            operation_handles,
+            [h.get_label() for h in operation_handles],
+            loc="lower right",
+            bbox_to_anchor=(legend_right_x, legend_y),
+            ncol=len(operation_handles),
+            **legend_kw,
+        )
 
 
 def _add_shared_x_label(fig, axes, label: str) -> None:
