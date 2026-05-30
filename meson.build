@@ -10,15 +10,18 @@ project(
     ],
 )
 
+cuda_arch_args = [
+    '-gencode=arch=compute_120,code=sm_120',
+    '-gencode=arch=compute_90,code=sm_90',
+    '-gencode=arch=compute_80,code=sm_80',
+]
+
 cuda_args = [
     '-std=c++20',
     '--expt-extended-lambda',
     '--expt-relaxed-constexpr',
     '--generate-line-info',
-    '-gencode=arch=compute_120,code=sm_120',
-    '-gencode=arch=compute_90,code=sm_90',
-    '-gencode=arch=compute_80,code=sm_80',
-]
+] + cuda_arch_args
 
 zlib_dep = subproject('zlib').get_variable('zlib_dep')
 
