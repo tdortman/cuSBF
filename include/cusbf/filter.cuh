@@ -32,6 +32,7 @@
 #include <cusbf/detail/count_positive_kmers.cuh>
 #include <cusbf/detail/fastx_chunk.cuh>
 #include <cusbf/detail/fastx_dispatch.hpp>
+#include <cusbf/detail/fastx_dense_batch.hpp>
 #include <cusbf/detail/fastx_host_limits.cuh>
 #include <cusbf/detail/fastx_pinned_buffer.hpp>
 #include <cusbf/detail/filter_impl.cuh>
@@ -62,88 +63,6 @@ namespace cusbf {
 template <typename Config>
 class filter {
    private:
-    struct FastxChunkAssembly {
-        explicit FastxChunkAssembly(uint64_t reserve_bytes = 0) {
-            if (reserve_bytes != 0) {
-                sequence.reserve(static_cast<size_t>(reserve_bytes));
-            }
-        }
-
-        [[nodiscard]] std::string_view sequence_view() const noexcept {
-            return external_sequence_.empty() ? std::string_view{sequence} : external_sequence_;
-        }
-
-        void appendRecord(std::string_view recordSequence) {
-            ranges.push_back(
-                RecordRange{
-                    static_cast<uint64_t>(sequence.size()),
-                    static_cast<uint64_t>(recordSequence.size()),
-                }
-            );
-            sequence.append(recordSequence);
-        }
-
-        [[nodiscard]] bool empty() const {
-            return ranges.empty();
-        }
-
-        [[nodiscard]] uint64_t recordCount() const {
-            return static_cast<uint64_t>(ranges.size());
-        }
-
-        [[nodiscard]] uint64_t raw_sequence_bytes() const {
-            if (!external_sequence_.empty()) {
-                uint64_t total = 0;
-                for (const RecordRange& range : ranges) {
-                    total += range.sequenceBytes;
-                }
-                return total;
-            }
-            return static_cast<uint64_t>(sequence.size());
-        }
-
-        void clear() {
-            sequence.clear();
-            ranges.clear();
-            external_sequence_ = {};
-        }
-
-        void clear_and_shrink() {
-            clear();
-            std::string{}.swap(sequence);
-            std::vector<RecordRange>{}.swap(ranges);
-        }
-
-        std::string sequence;
-        std::string_view external_sequence_{};
-        std::vector<RecordRange> ranges;
-    };
-
-    template <typename FastxReaderType>
-    [[nodiscard]] static Result<bool> collect_next_fastx_record(
-        FastxReaderType& reader,
-        detail::FastxRecord& record,
-        FastxChunkAssembly& chunk
-    ) {
-        if constexpr (std::is_same_v<std::decay_t<FastxReaderType>, detail::FastxBufferReader>) {
-            const auto range = CUSBF_TRY(
-                reader.appendNextRecord(record, chunk.sequence, chunk.external_sequence_)
-            );
-            if (!range) {
-                return false;
-            }
-            chunk.ranges.push_back(*range);
-            return true;
-        }
-
-        const bool has_record = CUSBF_TRY(reader.nextRecord(record));
-        if (!has_record) {
-            return false;
-        }
-        chunk.appendRecord(record.sequence);
-        return true;
-    }
-
     struct FastxRecordHeaderRef {
         std::string header;
         uint64_t record_index{};
@@ -445,7 +364,7 @@ class filter {
      * @param stream   CUDA stream to use.
      * @return Aggregate query summary for the whole batch.
      */
-    template <typename Consumer>
+    template <RecordQueryConsumer Consumer>
     [[nodiscard]] Result<FastxQueryReport> query_record_batch(
         RecordBatchView batch,
         Consumer&& consume,
@@ -522,7 +441,7 @@ class filter {
      * @param stream        CUDA stream to use.
      * @return Aggregate query summary for the whole stream.
      */
-    template <typename Consumer>
+    template <FastxRecordConsumer Consumer>
     [[nodiscard]] Result<FastxQueryReport> query_fastx_records(
         std::istream& input,
         Consumer&& consume,
@@ -550,7 +469,7 @@ class filter {
      * @return Aggregate query summary for the whole file.
      * @see query_fastx_records
      */
-    template <typename Consumer>
+    template <FastxRecordConsumer Consumer>
     [[nodiscard]] Result<FastxQueryReport> query_fastx_file_records(
         std::string_view path,
         Consumer&& consume,
@@ -747,14 +666,6 @@ class filter {
         return symbols < Config::k ? 0 : symbols - Config::k + 1;
     }
 
-    /// @brief Builds a @ref RecordBatchView from a sequence buffer and record ranges.
-    [[nodiscard]] static RecordBatchView
-    make_batch_view(std::string_view sequence, const std::vector<RecordRange>& ranges) {
-        return RecordBatchView{
-            sequence,
-            cuda::std::span<const RecordRange>{ranges.data(), ranges.size()},
-        };
-    }
 
     static void accumulate_insert_report(FastxInsertReport& total, const FastxInsertReport& chunk) {
         total.recordsIndexed += chunk.recordsIndexed;
@@ -843,7 +754,7 @@ class filter {
      * @param stream         CUDA stream to use.
      * @return Aggregate query summary for the batch.
      */
-    template <typename Consumer>
+    template <RecordQueryConsumer Consumer>
     [[nodiscard]] Result<FastxQueryReport> query_normalized_record_batch_with_hits(
         std::string_view input_sequence,
         Consumer&& consume,
@@ -995,11 +906,11 @@ class filter {
         const uint64_t sequence_reserve_bytes = detail::fastx_uses_mmap_reader(dispatch_path)
                                                     ? detail::fastx_file_bytes(source_name)
                                                     : 0;
-        FastxChunkAssembly chunk(sequence_reserve_bytes);
+        DenseRecordBatchBuilder chunk(sequence_reserve_bytes);
 
         if (detail::fastx_is_single_chunk_path(dispatch_path) && stream.get() == nullptr) {
             for (;;) {
-                if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
                     break;
                 }
             }
@@ -1007,7 +918,7 @@ class filter {
                 accumulate_insert_report(
                     report,
                     CUSBF_TRY(insert_record_batch(
-                        make_batch_view(chunk.sequence_view(), chunk.ranges), stream
+                        chunk.view(), stream
                     ))
                 );
             }
@@ -1030,7 +941,7 @@ class filter {
             };
 
             for (;;) {
-                if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
                     break;
                 }
                 if (detail::fastx_chunk_should_flush<Config>(
@@ -1058,7 +969,7 @@ class filter {
             accumulate_insert_report(
                 report,
                 CUSBF_TRY(insert_record_batch(
-                    make_batch_view(chunk.sequence_view(), chunk.ranges), stream
+                    chunk.view(), stream
                 ))
             );
             chunk.clear_and_shrink();
@@ -1066,7 +977,7 @@ class filter {
         };
 
         for (;;) {
-            if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+            if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
                 break;
             }
             if (detail::fastx_chunk_should_flush<Config>(
@@ -1119,11 +1030,11 @@ class filter {
         const uint64_t sequence_reserve_bytes = detail::fastx_uses_mmap_reader(dispatch_path)
                                                     ? detail::fastx_file_bytes(source_name)
                                                     : 0;
-        FastxChunkAssembly chunk(sequence_reserve_bytes);
+        DenseRecordBatchBuilder chunk(sequence_reserve_bytes);
 
         if (detail::fastx_is_single_chunk_path(dispatch_path) && stream.get() == nullptr) {
             for (;;) {
-                if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
                     break;
                 }
             }
@@ -1131,7 +1042,7 @@ class filter {
                 accumulate_query_report(
                     report,
                     CUSBF_TRY(query_record_batch_aggregate(
-                        make_batch_view(chunk.sequence_view(), chunk.ranges), stream
+                        chunk.view(), stream
                     ))
                 );
             }
@@ -1154,7 +1065,7 @@ class filter {
             };
 
             for (;;) {
-                if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
                     break;
                 }
                 if (detail::fastx_chunk_should_flush<Config>(
@@ -1182,7 +1093,7 @@ class filter {
             accumulate_query_report(
                 report,
                 CUSBF_TRY(query_record_batch_aggregate(
-                    make_batch_view(chunk.sequence_view(), chunk.ranges), stream
+                    chunk.view(), stream
                 ))
             );
             chunk.clear_and_shrink();
@@ -1190,7 +1101,7 @@ class filter {
         };
 
         for (;;) {
-            if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+            if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
                 break;
             }
             if (detail::fastx_chunk_should_flush<Config>(
@@ -1244,7 +1155,7 @@ class filter {
     }
 
     Result<void> flush_chunk_insert_pipelined(
-        FastxChunkAssembly& chunk,
+        DenseRecordBatchBuilder& chunk,
         FastxInsertReport& report,
         detail::ChunkStreamPair& chunk_streams,
         size_t& ping,
@@ -1262,7 +1173,7 @@ class filter {
         const cuda::stream_ref active_stream = chunk_streams[slot];
 
         CUSBF_TRY(normalize_record_batch_into_pinned(
-            make_batch_view(chunk.sequence_view(), chunk.ranges),
+            chunk.view(),
             normalized_sequence_pings_[slot],
             normalized_records_pings_[slot]
         ));
@@ -1283,7 +1194,7 @@ class filter {
     }
 
     Result<void> flush_chunk_query_aggregate_pipelined(
-        FastxChunkAssembly& chunk,
+        DenseRecordBatchBuilder& chunk,
         FastxQueryReport& report,
         detail::ChunkStreamPair& chunk_streams,
         size_t& ping,
@@ -1301,7 +1212,7 @@ class filter {
         const cuda::stream_ref active_stream = chunk_streams[slot];
 
         CUSBF_TRY(normalize_record_batch_into_pinned(
-            make_batch_view(chunk.sequence_view(), chunk.ranges),
+            chunk.view(),
             normalized_sequence_pings_[slot],
             normalized_records_pings_[slot]
         ));
@@ -1332,7 +1243,7 @@ class filter {
         return {};
     }
 
-    template <typename FastxReaderType, typename Consumer>
+    template <typename FastxReaderType, FastxRecordConsumer Consumer>
     [[nodiscard]] Result<FastxQueryReport> query_fastx_records_stream(
         FastxReaderType& reader,
         [[maybe_unused]] std::string_view source_name,
@@ -1351,14 +1262,14 @@ class filter {
         const auto staging_budget_bytes =
             detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
         const auto host_chunk_max_bytes = detail::fastx_host_chunk_max_bytes();
-        FastxChunkAssembly chunk;
+        DenseRecordBatchBuilder chunk;
         std::vector<FastxRecordHeaderRef> record_headers;
         uint64_t record_indexBase = 0;
 
         if (detail::fastx_is_single_chunk_path(dispatch_path)) {
             for (;;) {
                 const uint64_t local_index = chunk.recordCount();
-                if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+                if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
                     break;
                 }
                 record_headers.push_back(
@@ -1368,12 +1279,12 @@ class filter {
 
             if (!chunk.empty()) {
                 const FastxQueryReport chunkReport = CUSBF_TRY(query_record_batch(
-                    make_batch_view(chunk.sequence_view(), chunk.ranges),
+                    chunk.view(),
                     [&](const RecordQueryView& recordView) {
                         const FastxRecordHeaderRef& record_header =
                             record_headers[static_cast<size_t>(recordView.record_index)];
                         const RecordRange& range =
-                            chunk.ranges[static_cast<size_t>(recordView.record_index)];
+                            chunk.ranges()[static_cast<size_t>(recordView.record_index)];
                         consume(
                             FastxRecordView{
                                 record_header.record_index,
@@ -1409,12 +1320,12 @@ class filter {
                 return {};
             }
             const FastxQueryReport chunkReport = CUSBF_TRY(query_record_batch(
-                make_batch_view(chunk.sequence_view(), chunk.ranges),
+                chunk.view(),
                 [&](const RecordQueryView& recordView) {
                     const FastxRecordHeaderRef& record_header =
                         record_headers[static_cast<size_t>(recordView.record_index)];
                     const RecordRange& range =
-                        chunk.ranges[static_cast<size_t>(recordView.record_index)];
+                        chunk.ranges()[static_cast<size_t>(recordView.record_index)];
                     consume(
                         FastxRecordView{
                             record_indexBase + record_header.record_index,
@@ -1442,7 +1353,7 @@ class filter {
 
         for (;;) {
             const uint64_t local_index = chunk.recordCount();
-            if (!CUSBF_TRY(collect_next_fastx_record(reader, record, chunk))) {
+            if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
                 break;
             }
             record_headers.push_back(FastxRecordHeaderRef{std::move(record.header), local_index});
