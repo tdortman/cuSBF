@@ -44,15 +44,129 @@ inline std::string g_insertFastxPath;
 // 0 = use std::thread::hardware_concurrency() when building the CPU parallel FASTA.
 inline uint64_t g_fastxCpuNumRecords = 0;
 
+enum class FastxGpuPrepareKind {
+    HostOnly,
+    SequenceOnDevice,
+    PackedKmers,
+};
+
 struct FastxInsertWorkload {
     std::vector<char> host_insert_sequence;
     thrust::device_vector<char> d_insert_sequence;
     thrust::device_vector<uint64_t> d_insert_packed_kmers;
     uint64_t insert_kmers = 0;
     std::string cpu_insert_fastx_path;
+    FastxGpuPrepareKind gpuPrepareLevel = FastxGpuPrepareKind::HostOnly;
 };
 
 inline std::unique_ptr<FastxInsertWorkload> g_fastxInsertWorkload;
+
+// Chunk size for hash-filter encode/insert/query (avoids multi-GB opKeys buffers).
+inline uint64_t g_fastxChunkKmers = 0;
+inline bool g_fastxChunkKmersUserSet = false;
+inline uint64_t g_fastxChunkKmersResolved = 0;
+inline uint64_t g_fastxChunkKmersResolvedReserved = 0;
+inline uint64_t g_fastxChunkKmersResolvedScratchBpp = 0;
+
+constexpr uint64_t kFastxChunkBytesPerKmer = sizeof(uint64_t) + sizeof(uint8_t);
+// TCF per-chunk device footprint: harness opKeys/queryHits, cached bulk scratch, and
+// thrust::sort_by_key temp inside attach_lossy_buffers{,_recovery} (~2x uint64_t keys).
+constexpr uint64_t kTcfSortTempBytesPerKmer = sizeof(uint64_t) * 2;
+constexpr uint64_t kTcfFastxChunkBytesPerKmer = kFastxChunkBytesPerKmer + sizeof(uint16_t) +
+                                                sizeof(bool) + sizeof(uint64_t) +
+                                                kTcfSortTempBytesPerKmer;
+constexpr uint64_t kFastxChunkFloorKmers = 1ULL << 20;
+
+inline void cudaDeviceMemInfo(size_t& freeBytes, size_t& totalBytes) {
+    CUSBF_CUDA_CALL(cudaMemGetInfo(&freeBytes, &totalBytes));
+}
+
+inline size_t cudaDeviceFreeBytes() {
+    size_t freeBytes = 0;
+    size_t totalBytes = 0;
+    cudaDeviceMemInfo(freeBytes, totalBytes);
+    return freeBytes;
+}
+
+inline uint64_t fastxInsertSequenceDeviceBytes() {
+    return g_fastxInsertWorkload ? g_fastxInsertWorkload->host_insert_sequence.size() : 0;
+}
+
+inline uint64_t fastxPackedKmersDeviceBytes() {
+    if (!g_fastxInsertWorkload) {
+        return 0;
+    }
+    if (g_fastxInsertWorkload->gpuPrepareLevel < FastxGpuPrepareKind::PackedKmers) {
+        return 0;
+    }
+    return g_fastxInsertWorkload->insert_kmers * sizeof(uint64_t);
+}
+
+inline uint64_t resolveFastxChunkKmers(
+    uint64_t totalItems,
+    uint64_t reservedGpuBytes,
+    uint64_t scratchBytesPerKmer = kFastxChunkBytesPerKmer
+) {
+    if (g_fastxChunkKmersUserSet) {
+        g_fastxChunkKmersResolved = std::min(g_fastxChunkKmers, totalItems);
+        g_fastxChunkKmersResolvedReserved = reservedGpuBytes;
+        g_fastxChunkKmersResolvedScratchBpp = scratchBytesPerKmer;
+        return g_fastxChunkKmersResolved;
+    }
+    if (g_fastxChunkKmersResolved != 0 && g_fastxChunkKmersResolvedReserved == reservedGpuBytes &&
+        g_fastxChunkKmersResolvedScratchBpp == scratchBytesPerKmer) {
+        return std::min(g_fastxChunkKmersResolved, totalItems);
+    }
+
+    // Target ~80% of total device memory for filter + sequence + encode/insert/query scratch.
+    constexpr double kTargetDeviceFraction = 0.80;
+    constexpr uint64_t kHeadroomBytes = 256ULL << 20;
+
+    size_t freeBytes = 0;
+    size_t totalBytes = 0;
+    cudaDeviceMemInfo(freeBytes, totalBytes);
+
+    size_t budget = 0;
+    if (totalBytes > reservedGpuBytes + kHeadroomBytes) {
+        const size_t targetUsed =
+            static_cast<size_t>(static_cast<double>(totalBytes) * kTargetDeviceFraction);
+        if (targetUsed > reservedGpuBytes + kHeadroomBytes) {
+            budget = targetUsed - static_cast<size_t>(reservedGpuBytes) - kHeadroomBytes;
+        }
+    }
+    if (freeBytes > reservedGpuBytes + kHeadroomBytes) {
+        const size_t maxScratchFromFree =
+            freeBytes - static_cast<size_t>(reservedGpuBytes) - kHeadroomBytes;
+        budget = std::min(budget, maxScratchFromFree);
+    }
+
+    uint64_t chunk = budget / scratchBytesPerKmer;
+    chunk = std::max(chunk, kFastxChunkFloorKmers);
+    chunk = std::min(chunk, totalItems);
+
+    g_fastxChunkKmersResolved = chunk;
+    g_fastxChunkKmersResolvedReserved = reservedGpuBytes;
+    g_fastxChunkKmersResolvedScratchBpp = scratchBytesPerKmer;
+
+    const uint64_t scratchGiB = (chunk * scratchBytesPerKmer + (1ULL << 30) - 1) >> 30;
+    const uint64_t totalGiB = (totalBytes + (1ULL << 30) - 1) >> 30;
+    std::cerr << "FASTX chunk kmers: " << chunk << " (~" << scratchGiB
+              << " GiB per-chunk scratch @ " << scratchBytesPerKmer << " B/kmer, target "
+              << static_cast<int>(kTargetDeviceFraction * 100) << "% of " << totalGiB
+              << " GiB device, " << (freeBytes >> 30) << " GiB free)\n";
+
+    return chunk;
+}
+
+inline uint64_t fastxWorkloadChunkKmers(uint64_t totalItems = UINT64_MAX) {
+    const uint64_t chunk = g_fastxChunkKmersResolved != 0 ? g_fastxChunkKmersResolved
+                           : g_fastxChunkKmersUserSet     ? g_fastxChunkKmers
+                                                          : (64ULL << 20);
+    if (totalItems == UINT64_MAX) {
+        return chunk;
+    }
+    return std::min(chunk, totalItems);
+}
 
 inline uint64_t effectiveFastxCpuNumRecords() {
     if (g_fastxCpuNumRecords != 0) {
@@ -263,6 +377,24 @@ inline FastxBenchmarkCli parseFastxBenchmarkCli(int argc, char** argv) {
             continue;
         }
 
+        constexpr const char* chunkKmersPrefix = "--fastx-chunk-kmers=";
+        if (std::strncmp(arg.c_str(), chunkKmersPrefix, std::strlen(chunkKmersPrefix)) == 0) {
+            g_fastxChunkKmers = std::stoull(arg.substr(std::strlen(chunkKmersPrefix)));
+            g_fastxChunkKmersUserSet = true;
+            continue;
+        }
+        if (arg == "--fastx-chunk-kmers") {
+            if (i + 1 < argc) {
+                ++i;
+                g_fastxChunkKmers = std::stoull(argv[i]);
+                g_fastxChunkKmersUserSet = true;
+            } else {
+                std::cerr << "Missing value for --fastx-chunk-kmers\n";
+                std::exit(1);
+            }
+            continue;
+        }
+
         cli.benchmark_argv.push_back(argv[i]);
     }
 
@@ -368,6 +500,65 @@ inline void setFilterFprCounters(
 
 }  // namespace filter_benchmark
 
+inline uint64_t fastxFilterBitsBudget() {
+    if (!g_fastxInsertWorkload) {
+        return 0;
+    }
+    return resolveFastxFilterBits(g_fastxInsertWorkload->insert_kmers);
+}
+
+inline uint64_t fastxBenchKmersAtLoadFactor() {
+    const uint64_t bits = fastxFilterBitsBudget();
+    if (bits == 0 || !g_fastxInsertWorkload) {
+        return 0;
+    }
+    return std::min(
+        g_fastxInsertWorkload->insert_kmers,
+        static_cast<uint64_t>(
+            filter_benchmark::numItemsForTargetMemory(bits / 8, filter_benchmark::kBitsPerTag)
+        )
+    );
+}
+
+inline uint64_t fastxBenchSequenceLength(uint64_t benchKmers, uint64_t k = 31) {
+    if (!g_fastxInsertWorkload || benchKmers == 0) {
+        return 0;
+    }
+    const uint64_t maxLen = g_fastxInsertWorkload->host_insert_sequence.size();
+    const uint64_t needed = benchKmers + k - 1;
+    return std::min(maxLen, needed);
+}
+
+/// Shared FASTX throughput sizing for filter-comparison (target load factor).
+struct FastxThroughputConfig {
+    uint64_t genome_kmers = 0;
+    uint64_t bench_kmers = 0;
+    uint64_t bench_seq_len = 0;
+    uint64_t filter_bits = 0;
+};
+
+inline FastxThroughputConfig resolveFastxThroughputConfig(uint64_t k = 31) {
+    FastxThroughputConfig cfg;
+    if (!g_fastxInsertWorkload) {
+        return cfg;
+    }
+    cfg.genome_kmers = g_fastxInsertWorkload->insert_kmers;
+    cfg.filter_bits = resolveFastxFilterBits(cfg.genome_kmers);
+    cfg.bench_kmers = fastxBenchKmersAtLoadFactor();
+    cfg.bench_seq_len = fastxBenchSequenceLength(cfg.bench_kmers, k);
+    return cfg;
+}
+
+inline uint64_t fastxBenchCapacityItems() {
+    const uint64_t benchKmers = fastxBenchKmersAtLoadFactor();
+    if (benchKmers == 0) {
+        return 0;
+    }
+    return static_cast<uint64_t>(
+        std::ceil(static_cast<double>(benchKmers) / filter_benchmark::kLoadFactor)
+    );
+}
+
 inline void setBenchmarkCounters(
     benchmark::State& state,
     uint64_t memoryBytes,
@@ -441,7 +632,12 @@ inline void gpuGeneratePackedKmers(
 }
 
 template <uint64_t K, typename Alphabet = cusbf::DnaAlphabet>
-__global__ void encodePackedKmersKernel(const char* sequence, uint64_t numKmers, uint64_t* output) {
+__global__ void encodePackedKmersKernel(
+    const char* sequence,
+    uint64_t kmerStart,
+    uint64_t numKmers,
+    uint64_t* output
+) {
     constexpr uint64_t symbolBits = cuda::std::bit_width(Alphabet::symbolCount - 1);
     constexpr uint64_t symbolMask = (uint64_t{1} << symbolBits) - 1;
     const uint64_t idx = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -449,9 +645,11 @@ __global__ void encodePackedKmersKernel(const char* sequence, uint64_t numKmers,
         return;
     }
 
+    const uint64_t kmerIndex = kmerStart + idx;
     uint64_t packed = 0;
     for (uint64_t i = 0; i < K; ++i) {
-        const uint8_t encoded = Alphabet::encode(sequence + (idx + i) * Alphabet::symbolWidth);
+        const uint8_t encoded =
+            Alphabet::encode(sequence + (kmerIndex + i) * Alphabet::symbolWidth);
         packed = (packed << symbolBits) | (encoded & symbolMask);
     }
     output[idx] = packed;
@@ -462,22 +660,67 @@ inline void gpuEncodePackedKmers(
     const char* d_sequence,
     uint64_t sequenceLength,
     uint64_t* d_output,
-    cudaStream_t stream = {}
+    cudaStream_t stream = {},
+    uint64_t kmerStart = 0,
+    uint64_t numKmers = 0
 ) {
     const uint64_t symbols = sequenceLength / Alphabet::symbolWidth;
-    const uint64_t numKmers = symbols >= K ? symbols - K + 1 : 0;
-    if (numKmers == 0) {
+    const uint64_t totalKmers = symbols >= K ? symbols - K + 1 : 0;
+    if (kmerStart >= totalKmers) {
+        return;
+    }
+    const uint64_t available = totalKmers - kmerStart;
+    const uint64_t encodeCount = numKmers == 0 ? available : std::min(numKmers, available);
+    if (encodeCount == 0) {
         return;
     }
     constexpr uint64_t blockSize = 256;
-    const uint64_t gridSize = cuda::ceil_div(numKmers, blockSize);
+    const uint64_t gridSize = cuda::ceil_div(encodeCount, blockSize);
     encodePackedKmersKernel<K, Alphabet>
-        <<<gridSize, blockSize, 0, stream>>>(d_sequence, numKmers, d_output);
+        <<<gridSize, blockSize, 0, stream>>>(d_sequence, kmerStart, encodeCount, d_output);
+}
+
+inline void uploadFastxSequenceToDevice(FastxInsertWorkload& workload) {
+    if (workload.gpuPrepareLevel >= FastxGpuPrepareKind::SequenceOnDevice) {
+        return;
+    }
+    workload.d_insert_sequence.resize(workload.host_insert_sequence.size());
+    CUSBF_CUDA_CALL(cudaMemcpy(
+        thrust::raw_pointer_cast(workload.d_insert_sequence.data()),
+        workload.host_insert_sequence.data(),
+        workload.host_insert_sequence.size(),
+        cudaMemcpyHostToDevice
+    ));
+    workload.gpuPrepareLevel = FastxGpuPrepareKind::SequenceOnDevice;
 }
 
 template <uint64_t K = 31>
-inline void prepareFastxInsertWorkload(char separator = cusbf::DnaAlphabet::separator) {
+inline void encodeFastxPackedKmersOnDevice(FastxInsertWorkload& workload) {
+    if (workload.gpuPrepareLevel >= FastxGpuPrepareKind::PackedKmers) {
+        return;
+    }
+    uploadFastxSequenceToDevice(workload);
+    workload.d_insert_packed_kmers.resize(workload.insert_kmers);
+    gpuEncodePackedKmers<K>(
+        thrust::raw_pointer_cast(workload.d_insert_sequence.data()),
+        workload.host_insert_sequence.size(),
+        thrust::raw_pointer_cast(workload.d_insert_packed_kmers.data())
+    );
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+    workload.gpuPrepareLevel = FastxGpuPrepareKind::PackedKmers;
+}
+
+template <uint64_t K = 31>
+inline void prepareFastxInsertWorkload(
+    char separator = cusbf::DnaAlphabet::separator,
+    FastxGpuPrepareKind gpuPrepare = FastxGpuPrepareKind::PackedKmers
+) {
     if (g_fastxInsertWorkload) {
+        if (gpuPrepare == FastxGpuPrepareKind::SequenceOnDevice) {
+            uploadFastxSequenceToDevice(*g_fastxInsertWorkload);
+        } else if (gpuPrepare == FastxGpuPrepareKind::PackedKmers) {
+            encodeFastxPackedKmersOnDevice<K>(*g_fastxInsertWorkload);
+        }
         return;
     }
     if (g_insertFastxPath.empty()) {
@@ -495,28 +738,19 @@ inline void prepareFastxInsertWorkload(char separator = cusbf::DnaAlphabet::sepa
     workload->insert_kmers = workload->host_insert_sequence.size() >= K
                                  ? workload->host_insert_sequence.size() - K + 1
                                  : 0;
+    workload->gpuPrepareLevel = FastxGpuPrepareKind::HostOnly;
 
-    workload->d_insert_sequence.resize(workload->host_insert_sequence.size());
-    CUSBF_CUDA_CALL(cudaMemcpy(
-        thrust::raw_pointer_cast(workload->d_insert_sequence.data()),
-        workload->host_insert_sequence.data(),
-        workload->host_insert_sequence.size(),
-        cudaMemcpyHostToDevice
-    ));
-
-    workload->d_insert_packed_kmers.resize(workload->insert_kmers);
-    gpuEncodePackedKmers<K>(
-        thrust::raw_pointer_cast(workload->d_insert_sequence.data()),
-        workload->host_insert_sequence.size(),
-        thrust::raw_pointer_cast(workload->d_insert_packed_kmers.data())
-    );
-    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+    if (gpuPrepare == FastxGpuPrepareKind::SequenceOnDevice) {
+        uploadFastxSequenceToDevice(*workload);
+    } else if (gpuPrepare == FastxGpuPrepareKind::PackedKmers) {
+        encodeFastxPackedKmersOnDevice<K>(*workload);
+    }
 
     g_fastxInsertWorkload = std::move(workload);
 }
 
 inline void ensureFastxCpuInsertFasta(const char* prefix = "bloom-filter-comparison-cpu-insert") {
-    prepareFastxInsertWorkload();
+    prepareFastxInsertWorkload<31>(cusbf::DnaAlphabet::separator, FastxGpuPrepareKind::HostOnly);
     auto& workload = *g_fastxInsertWorkload;
     if (!workload.cpu_insert_fastx_path.empty()) {
         return;
@@ -853,7 +1087,7 @@ void runCuSbfFpr(Fixture& fixture, benchmark::State& state) {
 /// SuperBloom filter that gives at least 16 bits per item while satisfying
 /// the Rust library's SHARD_COUNT constraint (nb_blocks >= 1024).
 inline void cpuFilterExponents(uint64_t numKmers, uint8_t& bitExp, uint8_t& blockExp) {
-    constexpr uint64_t kBitsPerItem = 16;
+    constexpr uint64_t kBitsPerItem = filter_benchmark::kBitsPerTag;
     uint64_t filter_bits = cuda::std::bit_ceil(numKmers * kBitsPerItem);
     constexpr uint64_t kMinFilterBits = uint64_t{1} << 19;
     filter_bits = std::max(filter_bits, kMinFilterBits);
@@ -876,14 +1110,29 @@ class SuperBloomCpuFastxFixture : public benchmark::Fixture {
 
     void SetUp(const benchmark::State&) override {
         initFailed_ = false;
-        prepareFastxInsertWorkload<Config::k>();
-        ensureFastxCpuInsertFasta();
+        prepareFastxInsertWorkload<Config::k>(
+            cusbf::DnaAlphabet::separator, FastxGpuPrepareKind::HostOnly
+        );
 
-        numKmers = g_fastxInsertWorkload->insert_kmers;
-        sequenceLength = g_fastxInsertWorkload->host_insert_sequence.size();
-        filter_bits = resolveFastxFilterBits(numKmers);
+        const FastxThroughputConfig cfg = resolveFastxThroughputConfig(Config::k);
+        numKmers = cfg.bench_kmers;
+        sequenceLength = cfg.bench_seq_len;
+        filter_bits = cfg.filter_bits;
 
-        cpuFilterExponents(numKmers, bitVectorSizeExp, blockSizeExp);
+        auto& workload = *g_fastxInsertWorkload;
+        if (!workload.cpu_insert_fastx_path.empty()) {
+            std::filesystem::remove(workload.cpu_insert_fastx_path);
+            workload.cpu_insert_fastx_path.clear();
+        }
+        const std::vector<char> benchSequence(
+            workload.host_insert_sequence.begin(),
+            workload.host_insert_sequence.begin() + static_cast<std::ptrdiff_t>(sequenceLength)
+        );
+        workload.cpu_insert_fastx_path = writeGeneratedFastaFromSequence(
+            benchSequence, effectiveFastxCpuNumRecords(), "bloom-filter-comparison-cpu-insert"
+        );
+
+        cpuFilterExponents(fastxBenchCapacityItems(), bitVectorSizeExp, blockSizeExp);
 
         unsigned n = std::thread::hardware_concurrency();
         threadCount_ = n > 0 ? static_cast<size_t>(n) : 0;
@@ -1004,7 +1253,7 @@ void runSuperBloomCpuFastxQuery(Fixture& fixture, benchmark::State& state) {
     };
 
 #define BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_ALL(FixtureName) \
-    BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_INSERT(FixtureName); \
+    BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_INSERT(FixtureName)  \
     BENCHMARK_DEFINE_SUPERBLOOM_CPU_FASTX_QUERY(FixtureName)
 
 #define BENCHMARK_REGISTER_SUPERBLOOM_CPU_FASTX_ALL(FixtureName) \
@@ -1380,13 +1629,14 @@ void runSuperBloomCpuFpr(Fixture& fixture, benchmark::State& state) {
         ->Repetitions(5)                \
         ->ReportAggregatesOnly(true)
 
-// Single-point FPR comparison (filter size from g_fastxBitsPerItem × insert k-mers).
-#define BENCHMARK_CONFIG_FPR_FASTX  \
-    ->Unit(benchmark::kMillisecond) \
-        ->UseManualTime()           \
-        ->Iterations(1)             \
-        ->Repetitions(3)            \
-        ->ReportAggregatesOnly(true)
+#define BENCHMARK_CONFIG_FPR_FASTX   \
+    ->Unit(benchmark::kMillisecond)  \
+        ->UseManualTime()            \
+        ->Iterations(1)              \
+        ->Repetitions(3)             \
+        ->ReportAggregatesOnly(true) \
+        ->ArgName("filter_bits_exp") \
+        ->DenseRange(22, 31, 1)
 
 #define REGISTER_BENCHMARK(FixtureName, BenchName) \
     BENCHMARK_REGISTER_F(FixtureName, BenchName)   \

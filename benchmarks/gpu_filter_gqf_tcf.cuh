@@ -2,13 +2,8 @@
 
 #include <cuda/__cmath/ceil_div.h>
 #include <cuda_runtime.h>
-#include <thrust/copy.h>
-#include <thrust/count.h>
 #include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>
-#include <thrust/reduce.h>
-#include <thrust/transform.h>
-#include <cuda/std/functional>
 
 #include <algorithm>
 #include <cmath>
@@ -39,12 +34,29 @@ inline size_t gqfFilterBytes(const QF* devQf) {
     return metadata.total_size_in_bytes;
 }
 
+namespace detail {
+
+__global__ void convertGqfResultsKernel(uint64_t* data, size_t count) {
+    const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (idx < count) {
+        data[idx] = data[idx] > 0 ? 1ULL : 0ULL;
+    }
+}
+
+}  // namespace detail
+
 inline void convertGqfResults(thrust::device_vector<uint64_t>& results) {
-    thrust::transform(
-        results.begin(), results.end(), results.begin(), [] __device__(uint64_t value) {
-            return value > 0 ? 1ULL : 0ULL;
-        }
-    );
+    const size_t count = results.size();
+    if (count == 0) {
+        return;
+    }
+    uint64_t* data = thrust::raw_pointer_cast(results.data());
+    constexpr unsigned kBlockSize = 256;
+    const unsigned grid =
+        static_cast<unsigned>((count + kBlockSize - 1) / kBlockSize);
+    detail::convertGqfResultsKernel<<<grid, kBlockSize>>>(data, count);
+    CUSBF_CUDA_CALL(cudaGetLastError());
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
 
 inline uint32_t gqfExponent(uint64_t minCapacity) {
@@ -62,20 +74,37 @@ inline uint64_t gqfMinCapacityForItems(uint64_t numItems) {
     return static_cast<uint64_t>(std::ceil(static_cast<double>(numItems) / kLoadFactor));
 }
 
+inline uint64_t gqfMinFilterBitsForItems(uint64_t numItems) {
+    return gqfCapacity(gqfExponent(std::max(gqfMinCapacityForItems(numItems), uint64_t{1})))
+           * static_cast<uint64_t>(QF_BITS_PER_SLOT);
+}
+
 inline uint64_t gqfCapacityForFilterBits(uint64_t filterBits) {
     const uint64_t minCapacity =
         cuda::ceil_div(std::max(filterBits, uint64_t{1}), static_cast<uint64_t>(QF_BITS_PER_SLOT));
     return 1ULL << gqfExponent(minCapacity);
 }
 
+inline bool gqfSupportsItemsForFilterBits(uint64_t filterBits, uint64_t numItems) {
+    return gqfCapacityForFilterBits(filterBits) >= std::max(gqfMinCapacityForItems(numItems), uint64_t{1});
+}
+
 inline uint64_t tcfCapacityForItems(uint64_t numItems) {
     return static_cast<uint64_t>(std::ceil(static_cast<double>(numItems) / kLoadFactor));
+}
+
+inline uint64_t tcfMinFilterBitsForItems(uint64_t numItems) {
+    return tcfCapacityForItems(numItems) * static_cast<uint64_t>(sizeof(uint16_t) * 8);
 }
 
 inline uint64_t tcfCapacityForFilterBits(uint64_t filterBits) {
     return cuda::ceil_div(
         std::max(filterBits, uint64_t{1}), static_cast<uint64_t>(sizeof(uint16_t) * 8)
     );
+}
+
+inline bool tcfSupportsItemsForFilterBits(uint64_t filterBits, uint64_t numItems) {
+    return tcfCapacityForFilterBits(filterBits) >= std::max(tcfCapacityForItems(numItems), uint64_t{1});
 }
 
 struct GqfHandle {
@@ -158,23 +187,68 @@ struct TcfHandle {
         createForCapacity(tcfCapacityForFilterBits(filterBits));
     }
 
+    [[nodiscard]] uint64_t chunkKmers() const {
+        return benchmark_common::fastxWorkloadChunkKmers(numItems);
+    }
+
     void bindWorkload(uint64_t count) {
         numItems = count;
-        opKeys.resize(count);
-        queryHits.resize(count);
+        const uint64_t chunk = chunkKmers();
+        opKeys.resize(chunk);
+        queryHits.resize(chunk);
+        if (filter != nullptr) {
+            filter->reserve_bulk_scratch(chunk);
+        }
     }
 
     template <uint64_t K = 31>
-    void refreshOpKeysFromSequence(const char* d_sequence, uint64_t sequenceLength) {
-        if (numItems == 0) {
+    void refreshOpKeysFromSequence(
+        const char* d_sequence,
+        uint64_t sequenceLength,
+        uint64_t kmerStart = 0,
+        uint64_t count = 0
+    ) {
+        const uint64_t encodeCount = count == 0 ? numItems : count;
+        if (encodeCount == 0) {
             return;
+        }
+        if (opKeys.size() < encodeCount) {
+            opKeys.resize(encodeCount);
         }
         benchmark_common::gpuEncodePackedKmers<K>(
             d_sequence,
             sequenceLength,
-            thrust::raw_pointer_cast(opKeys.data())
+            thrust::raw_pointer_cast(opKeys.data()),
+            {},
+            kmerStart,
+            encodeCount
         );
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+    }
+
+    template <uint64_t K = 31>
+    void refreshOpKeysAllChunksFromSequence(const char* d_sequence, uint64_t sequenceLength) {
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < numItems; offset += chunk) {
+            const uint64_t n = std::min(chunk, numItems - offset);
+            refreshOpKeysFromSequence<K>(d_sequence, sequenceLength, offset, n);
+        }
+    }
+
+    void bulkInsertAllChunks() {
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < numItems; offset += chunk) {
+            const uint64_t n = std::min(chunk, numItems - offset);
+            bulkInsertPrepared(n);
+        }
+    }
+
+    void bulkQueryAllChunks() {
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < numItems; offset += chunk) {
+            const uint64_t n = std::min(chunk, numItems - offset);
+            bulkQueryPrepared(n);
+        }
     }
 
     [[nodiscard]] size_t filterBytes() const {
@@ -221,32 +295,37 @@ struct TcfHandle {
         );
     }
 
-
     // TCF mutates keys in-place; copy into opKeys before each bulk op.
-    void refreshOpKeysFromPacked(uint64_t* keys, uint64_t count) {
-        if (opKeys.size() < count) {
-            bindWorkload(count);
+    void refreshOpKeysFromPacked(uint64_t* keys, uint64_t count, uint64_t keyOffset = 0) {
+        const uint64_t chunk = chunkKmers();
+        const uint64_t n = std::min(chunk, count);
+        if (opKeys.size() < n) {
+            opKeys.resize(n);
         }
         CUSBF_CUDA_CALL(cudaMemcpy(
             thrust::raw_pointer_cast(opKeys.data()),
-            keys,
-            count * sizeof(uint64_t),
+            keys + keyOffset,
+            n * sizeof(uint64_t),
             cudaMemcpyDeviceToDevice
         ));
     }
 
+    void bulkInsertFromPacked(uint64_t* keys, uint64_t count) {
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < count; offset += chunk) {
+            const uint64_t n = std::min(chunk, count - offset);
+            refreshOpKeysFromPacked(keys, n, offset);
+            bulkInsertPrepared(n);
+        }
+    }
+
     void bulkInsert(uint64_t* keys, uint64_t count) {
-        refreshOpKeysFromPacked(keys, count);
-        bulkInsertPrepared(count);
+        bulkInsertFromPacked(keys, count);
     }
 
     void bulkQueryInto(uint64_t* keys, uint64_t count, bool* outHits) {
         refreshOpKeysFromPacked(keys, count);
-        filter->bulk_query_into(
-            thrust::raw_pointer_cast(opKeys.data()),
-            count,
-            outHits
-        );
+        filter->bulk_query_into(thrust::raw_pointer_cast(opKeys.data()), count, outHits);
     }
 
     // Legacy API: allocates a fresh hits buffer (prefer bulkQueryInto + queryHits).
@@ -256,24 +335,26 @@ struct TcfHandle {
 
     template <uint64_t K = 31>
     void bulkInsert(const char* d_sequence, uint64_t sequenceLength, uint64_t count) {
-        if (opKeys.empty()) {
-            bindWorkload(count);
+        bindWorkload(count);
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < count; offset += chunk) {
+            const uint64_t n = std::min(chunk, count - offset);
+            refreshOpKeysFromSequence<K>(d_sequence, sequenceLength, offset, n);
+            bulkInsertPrepared(n);
         }
-        refreshOpKeysFromSequence<K>(d_sequence, sequenceLength);
-        bulkInsertPrepared(count);
     }
 
     template <uint64_t K = 31>
     void bulkQueryFromSequence(const char* d_sequence, uint64_t sequenceLength, uint64_t count) {
-        if (opKeys.empty()) {
-            bindWorkload(count);
+        bindWorkload(count);
+        const uint64_t chunk = chunkKmers();
+        for (uint64_t offset = 0; offset < count; offset += chunk) {
+            const uint64_t n = std::min(chunk, count - offset);
+            refreshOpKeysFromSequence<K>(d_sequence, sequenceLength, offset, n);
+            bulkQueryPrepared(n);
         }
-        if (queryHits.size() < count) {
-            queryHits.resize(count);
-        }
-        refreshOpKeysFromSequence<K>(d_sequence, sequenceLength);
-        bulkQueryPrepared(count);
     }
+
 };
 
 inline void copyPackedKmers(
@@ -293,5 +374,6 @@ inline void gqfBulkGet(GqfHandle& handle, uint64_t count, uint64_t* keys, uint64
     bulk_get(handle.filter, count, keys, results);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
+
 
 }  // namespace gpu_filter_gqf_tcf
