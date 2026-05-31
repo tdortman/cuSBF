@@ -207,8 +207,3 @@ using ProteinConfig = cusbf::Config<12, 10, 6, 4, 256, cusbf::ProteinAlphabet>;
     return cusbf::Ok();
 }
 ```
-
-## Related Publications
-
-- E. Conchon-Kerjan, T. Rouzé, L. Robidou, F. Ingels, and A. Limasset, “Super Bloom: Fast and precise filter for streaming k-mer queries,” bioRxiv, 2026, doi: 10.64898/2026.03.17.712354.
-- D. Jünger, K. Kristensen, Y. Wang, X. Yu, and B. Schmidt, “Optimizing Bloom Filters for Modern GPU Architectures.” 2025. [Online]. Available: https://arxiv.org/abs/2512.15595
