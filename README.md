@@ -19,6 +19,8 @@ It exploits the streaming nature of sequence-derived k-mers by using **minimizer
 
 ## Performance
 
+![image](./docs/throughput_comparison.png)
+
 Benchmarks use `Config<31, 28, 16, 4>` on an NVIDIA RTX PRO 6000 Blackwell GPU. CPU Super Bloom runs on an Intel Xeon W9-3595X with 120 threads.
 
 Compared against:
@@ -29,7 +31,7 @@ Compared against:
 - [GPU Bulk Two-Choice Filter (TCF)](https://github.com/saltsystemslab/gpu-filters/tree/main/bulk-tcf)
 - [GPU Counting Quotient Filter (GQF)](https://github.com/saltsystemslab/gpu-filters/tree/main/gqf)
 
-### Smaller Filter (_C. elegans_, ~100M k-mers)
+### Smaller Filter (C. elegans, ~100M k-mers)
 
 | Comparison           | Insert      | Query       |
 | -------------------- | ----------- | ----------- |
