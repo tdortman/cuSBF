@@ -332,6 +332,7 @@ def plot_heatmap_summary(merged: pd.DataFrame, output_dir: Path) -> None:
         row_image = None
         for col_idx, h_val in enumerate(h_values_sorted):
             ax = axes[row_idx, col_idx]
+            ax.set_axisbelow(True)
             h_subset = subset[subset["h"] == h_val]
             pivot = h_subset.pivot(index="s", columns="m", values=metric_col).reindex(
                 index=s_values_sorted, columns=m_values_sorted
@@ -346,6 +347,28 @@ def plot_heatmap_summary(merged: pd.DataFrame, output_dir: Path) -> None:
             )
             if row_image is None:
                 row_image = image
+
+            x_tick_label_size = scaled_tick_label_size(len(m_values_sorted))
+            x_tick_labels = categorical_tick_labels(m_values_sorted)
+            y_tick_label_size = scaled_tick_label_size(len(s_values_sorted))
+
+            ax.set_title(f"H={h_val}", fontsize=PAPER_TITLE_SIZE, fontweight="bold")
+            ax.set_xticks(range(len(m_values_sorted)))
+            ax.set_xticklabels(m_values_sorted)
+            ax.set_xticklabels(
+                x_tick_labels,
+                fontsize=x_tick_label_size,
+                rotation=0,
+                ha="center",
+            )
+            ax.set_yticks(range(len(s_values_sorted)))
+            ax.set_yticklabels(s_values_sorted, fontsize=y_tick_label_size)
+            ax.set_xticks(np.arange(-0.5, len(m_values_sorted), 1), minor=True)
+            ax.set_yticks(np.arange(-0.5, len(s_values_sorted), 1), minor=True)
+            ax.grid(which="minor", color="white", linewidth=0.7, alpha=0.45)
+            ax.tick_params(which="minor", bottom=False, left=False)
+            for spine in ax.spines.values():
+                spine.set_zorder(0.5)
 
             for _, row in h_subset[h_subset["pareto_total"]].iterrows():
                 x = m_index[int(row["m"])] - 0.5
@@ -371,25 +394,6 @@ def plot_heatmap_summary(merged: pd.DataFrame, output_dir: Path) -> None:
                     )
                 )
 
-            x_tick_label_size = scaled_tick_label_size(len(m_values_sorted))
-            x_tick_labels = categorical_tick_labels(m_values_sorted)
-            y_tick_label_size = scaled_tick_label_size(len(s_values_sorted))
-
-            ax.set_title(f"H={h_val}", fontsize=PAPER_TITLE_SIZE, fontweight="bold")
-            ax.set_xticks(range(len(m_values_sorted)))
-            ax.set_xticklabels(m_values_sorted)
-            ax.set_xticklabels(
-                x_tick_labels,
-                fontsize=x_tick_label_size,
-                rotation=0,
-                ha="center",
-            )
-            ax.set_yticks(range(len(s_values_sorted)))
-            ax.set_yticklabels(s_values_sorted, fontsize=y_tick_label_size)
-            ax.set_xticks(np.arange(-0.5, len(m_values_sorted), 1), minor=True)
-            ax.set_yticks(np.arange(-0.5, len(s_values_sorted), 1), minor=True)
-            ax.grid(which="minor", color="white", linewidth=0.7, alpha=0.45)
-            ax.tick_params(which="minor", bottom=False, left=False)
 
             if col_idx == 0:
                 ax.set_ylabel("S", fontsize=PAPER_AXIS_LABEL_SIZE, fontweight="bold")
