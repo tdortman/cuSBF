@@ -36,6 +36,9 @@ H_MARKERS = {4: "o", 8: "s", 12: "^", 16: "D"}
 PARETO_LABEL_COLOR = "#1a5276"
 PARETO_OUTLINE_COLOR = "#f7f9f9"
 PARETO_EDGE_COLOR = "#17202a"
+# Above minor grid (~1.5) and axis spines (~2.5) so outer Pareto edges stay visible.
+# clip_on=False keeps edge-row halos from being clipped by the axes boundary.
+PARETO_PATCH_ZORDER = 4
 DOUBLE_COLUMN_WIDTH_IN = 7.1
 PARETO_FIG_HEIGHT_IN = 4.4
 HEATMAP_FIG_HEIGHT_IN = 5.2
@@ -381,6 +384,8 @@ def plot_heatmap_summary(merged: pd.DataFrame, output_dir: Path) -> None:
                         fill=False,
                         edgecolor=PARETO_OUTLINE_COLOR,
                         linewidth=1.8,
+                        zorder=PARETO_PATCH_ZORDER,
+                        clip_on=False,
                     )
                 )
                 ax.add_patch(
@@ -391,9 +396,10 @@ def plot_heatmap_summary(merged: pd.DataFrame, output_dir: Path) -> None:
                         fill=False,
                         edgecolor=PARETO_EDGE_COLOR,
                         linewidth=0.8,
+                        zorder=PARETO_PATCH_ZORDER + 0.1,
+                        clip_on=False,
                     )
                 )
-
 
             if col_idx == 0:
                 ax.set_ylabel("S", fontsize=PAPER_AXIS_LABEL_SIZE, fontweight="bold")
