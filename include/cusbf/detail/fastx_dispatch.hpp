@@ -125,23 +125,31 @@ template <typename Config>
     );
 }
 
+template <typename T>
+concept cusbf_result_like =
+    requires {
+        typename T::value_type;
+        typename T::error_type;
+    } && std::same_as<typename T::error_type, cusbf::Error>;
+
 /// @brief Return type of a @ref fastx_dispatch_handler when invoked with a stream reader.
 template <typename Handler>
 using fastx_dispatch_handler_result_t =
-    std::invoke_result_t<Handler, FastxReader&, fastx_dispatch_path>;
+    std::invoke_result_t<Handler&, FastxReader&, fastx_dispatch_path>;
 
 /// @brief Handler invoked by @ref dispatch_fastx_file with either reader type and a dispatch path.
 ///
 /// Must return the same @ref cusbf::Result for @ref FastxReader and @ref FastxBufferReader inputs.
 template <typename Handler>
-concept fastx_dispatch_handler =
-    std::invocable<Handler, FastxReader&, fastx_dispatch_path> &&
-    std::invocable<Handler, FastxBufferReader&, fastx_dispatch_path> &&
-    std::same_as<
-        fastx_dispatch_handler_result_t<Handler>,
-        std::invoke_result_t<Handler, FastxBufferReader&, fastx_dispatch_path>> &&
-    requires { typename fastx_dispatch_handler_result_t<Handler>::value_type; } &&
-    std::same_as<typename fastx_dispatch_handler_result_t<Handler>::error_type, cusbf::Error>;
+concept fastx_dispatch_handler = requires(
+    Handler& handler,
+    FastxReader& reader,
+    FastxBufferReader& buffer_reader,
+    fastx_dispatch_path path
+) {
+    { handler(reader, path) } -> cusbf_result_like;
+    { handler(buffer_reader, path) } -> std::same_as<fastx_dispatch_handler_result_t<Handler>>;
+};
 
 /// @brief Opens a FASTX path and invokes @p handler with a reader and dispatch path.
 ///
