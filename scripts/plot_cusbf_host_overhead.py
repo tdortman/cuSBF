@@ -20,29 +20,58 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import plot_utils as pu
 import typer
+from matplotlib.artist import Artist
 from matplotlib.axes import Axes
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-app = typer.Typer(help="Plot cuSBF host pipeline overhead from benchmark CSVs")
+app = typer.Typer(help="Plot cuSBF host-sequence throughput from benchmark CSVs")
 
 _OPERATIONS = ["Insert", "Query"]
-_OUTPUT_BASENAME = "cusbf_host_overhead"
-_SUBPLOT_FIGSIZE = (7.2, 3.0)
-_SUBPLOT_LEFT_MARGIN = 0.10
+_OUTPUT_BASENAME = "host_overhead"
+_SUBPLOT_FIGSIZE = (4.5, 2.5)
+_SUBPLOT_LEFT_MARGIN = 0.17
 _SUBPLOT_RIGHT_MARGIN = 0.99
-_SUBPLOT_BOTTOM_MARGIN = 0.18
-_SUBPLOT_TOP_MARGIN = 0.90
-_SUBPLOT_WSPACE = 0.12
+_SUBPLOT_BOTTOM_MARGIN = 0.05
+_SUBPLOT_TOP_MARGIN = 0.76
+_FIGURE_PAD_INCHES = 0.04
+_YLIM_TOP_FACTOR = 1.45
 
-_HBM3_LABEL = "GH200 (HBM3)"
-_GDDR7_LABEL = "RTX PRO 6000 (GDDR7)"
-_KERNEL_COLOR = pu.FILTER_COLORS["cusbf"]
+_YLABEL_FONT_SIZE = 10
+_YLABEL_COORD_X = -0.12
+_LEGEND_FONT_SIZE = 10
+
+_LEGEND_ABOVE_AXES_Y = 1.1
+_LEGEND_ROW_STEP = 0.11
+_DEVICE_RESIDENT_LABEL = "Device-resident"
+
+_TICK_LABEL_FONT_SIZE = 9
+
+_HBM3_LABEL = "GH200"
+_GDDR7_LABEL = "RTX PRO 6000"
+_HBM3_COLOR = pu.FILTER_COLORS["cusbf"]
+_GDDR7_COLOR = "#F18F01"
+_KERNEL_COLOR = _HBM3_COLOR
 _OVERHEAD_COLOR = "#D1D5DB"
 _OVERHEAD_HATCH = "//"
-_BAR_WIDTH = 0.32
-_GROUP_SPACING = 1.35
-_PLATFORM_OFFSET = 0.18
-_ANNOTATION_FONT_SIZE = 9
+_BAR_WIDTH = 0.22
+_GROUP_SPACING = 1.0
+_OP_STRIDE = 0.28
+_PLATFORM_OFFSET = 0.52
+_ANNOTATION_FONT_SIZE = 7
+_PLATFORM_SHORT_LABELS = {
+    _GDDR7_LABEL: "System A",
+    _HBM3_LABEL: "System B",
+}
+_PLATFORM_LEGEND_LABELS = {
+    _GDDR7_LABEL: _GDDR7_LABEL,
+    _HBM3_LABEL: _HBM3_LABEL,
+}
+_PLATFORM_ORDER = [_GDDR7_LABEL, _HBM3_LABEL]
+_BAR_OPERATIONS = [
+    ("Insert", "//"),
+    ("Query", None),
+]
 
 
 @dataclass(frozen=True)
