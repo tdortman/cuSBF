@@ -790,7 +790,6 @@ class filter {
         return symbols < Config::k ? 0 : symbols - Config::k + 1;
     }
 
-
     static void accumulate_insert_report(FastxInsertReport& total, const FastxInsertReport& chunk) {
         total.recordsIndexed += chunk.recordsIndexed;
         total.indexedBases += chunk.indexedBases;
@@ -1040,10 +1039,7 @@ class filter {
             }
             if (!chunk.empty()) {
                 accumulate_insert_report(
-                    report,
-                    CUSBF_TRY(insert_record_batch(
-                        chunk.view(), stream
-                    ))
+                    report, CUSBF_TRY(insert_record_batch(chunk.view(), stream))
                 );
             }
             release_fastx_staging_scratch();
@@ -1090,12 +1086,7 @@ class filter {
             if (chunk.empty()) {
                 return {};
             }
-            accumulate_insert_report(
-                report,
-                CUSBF_TRY(insert_record_batch(
-                    chunk.view(), stream
-                ))
-            );
+            accumulate_insert_report(report, CUSBF_TRY(insert_record_batch(chunk.view(), stream)));
             chunk.clear_and_shrink();
             return {};
         };
@@ -1164,10 +1155,7 @@ class filter {
             }
             if (!chunk.empty()) {
                 accumulate_query_report(
-                    report,
-                    CUSBF_TRY(query_record_batch_aggregate(
-                        chunk.view(), stream
-                    ))
+                    report, CUSBF_TRY(query_record_batch_aggregate(chunk.view(), stream))
                 );
             }
             release_fastx_staging_scratch();
@@ -1215,10 +1203,7 @@ class filter {
                 return {};
             }
             accumulate_query_report(
-                report,
-                CUSBF_TRY(query_record_batch_aggregate(
-                    chunk.view(), stream
-                ))
+                report, CUSBF_TRY(query_record_batch_aggregate(chunk.view(), stream))
             );
             chunk.clear_and_shrink();
             return {};
@@ -1297,9 +1282,7 @@ class filter {
         const cuda::stream_ref active_stream = chunk_streams[slot];
 
         CUSBF_TRY(normalize_record_batch_into_pinned(
-            chunk.view(),
-            normalized_sequence_pings_[slot],
-            normalized_records_pings_[slot]
+            chunk.view(), normalized_sequence_pings_[slot], normalized_records_pings_[slot]
         ));
         chunk.clear();
         accumulate_normalized_insert_report(report, slot);
@@ -1336,9 +1319,7 @@ class filter {
         const cuda::stream_ref active_stream = chunk_streams[slot];
 
         CUSBF_TRY(normalize_record_batch_into_pinned(
-            chunk.view(),
-            normalized_sequence_pings_[slot],
-            normalized_records_pings_[slot]
+            chunk.view(), normalized_sequence_pings_[slot], normalized_records_pings_[slot]
         ));
         chunk.clear();
         accumulate_normalized_query_report(report, slot);
