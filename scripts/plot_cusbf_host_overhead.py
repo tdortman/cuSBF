@@ -80,16 +80,6 @@ class PipelineThroughput:
     device: dict[str, float]
 
 
-@dataclass(frozen=True)
-class OverheadRow:
-    platform: str
-    workload: str
-    operation: str
-    host_gkmers_per_sec: float
-    device_gkmers_per_sec: float
-    overhead_pct: float
-
-
 def parse_pipeline_mode(row: pd.Series, fixture_base: str) -> Optional[str]:
     """Return ``host`` or ``device`` from fixture name or pipeline_mode counter."""
     base = fixture_base.lower()
