@@ -382,43 +382,40 @@ def plot_absolute_panel(
                     zorder=3,
                 )
 
-    ax.set_xticks([idx * _GROUP_SPACING for idx in range(len(_OPERATIONS))])
-    ax.set_xticklabels(_OPERATIONS, fontsize=pu.TICK_LABEL_FONT_SIZE)
+    ax.set_xticks([])
+    ax.tick_params(axis="x", length=0)
+    for op_idx, operation in enumerate(_OPERATIONS):
+        ax.text(
+            op_idx * _GROUP_SPACING,
+            -0.17,
+            operation,
+            ha="center",
+            va="top",
+            fontsize=_TICK_LABEL_FONT_SIZE,
+            transform=ax.get_xaxis_transform(),
+            clip_on=False,
+        )
     ax.set_xlim(-0.55, (len(_OPERATIONS) - 1) * _GROUP_SPACING + 0.55)
 
     if show_ylabel:
-        ax.set_ylabel(pu.THROUGHPUT_LABEL, fontsize=pu.AXIS_LABEL_FONT_SIZE)
-    ax.set_title(title, fontsize=pu.TITLE_FONT_SIZE - 2, pad=8)
+        ax.set_ylabel(pu.THROUGHPUT_LABEL, fontsize=pu.AXIS_LABEL_FONT_SIZE, labelpad=2)
     ax.grid(True, axis="y", ls="--", alpha=pu.GRID_ALPHA)
 
 
 def save_overhead_figure(
     output_pdf: Path,
-    output_png: Path,
-    small_hbm3: PipelineThroughput,
-    small_gddr7: PipelineThroughput,
-    large_hbm3: PipelineThroughput,
-    large_gddr7: PipelineThroughput,
+    hbm3: PipelineThroughput,
+    gddr7: PipelineThroughput,
+    ylim: tuple[float, float],
+    pdf_message: str,
 ) -> None:
-    fig, (ax_left, ax_right) = plt.subplots(
-        1,
-        2,
-        figsize=_SUBPLOT_FIGSIZE,
-        gridspec_kw={"wspace": _SUBPLOT_WSPACE},
-    )
+    fig, ax = plt.subplots(1, 1, figsize=_SUBPLOT_FIGSIZE)
     legend_handles = plot_overhead_panel(
-        ax_left,
-        small_hbm3,
-        small_gddr7,
-        title="Small workload",
+        ax,
+        hbm3,
+        gddr7,
         show_ylabel=True,
-    )
-    plot_overhead_panel(
-        ax_right,
-        large_hbm3,
-        large_gddr7,
-        title="Large workload",
-        show_ylabel=False,
+        ylim=ylim,
     )
 
     fig.subplots_adjust(
@@ -464,11 +461,17 @@ def save_absolute_figure(
         bottom=_SUBPLOT_BOTTOM_MARGIN,
         top=_SUBPLOT_TOP_MARGIN,
     )
-    pu.save_figure(
-        fig,
+    fig.savefig(
         output_path,
-        message=f"Absolute throughput figure saved to {output_path}",
+        pad_inches=_FIGURE_PAD_INCHES,
+        transparent=True,
+        format="pdf",
+        dpi=600,
     )
+    typer.secho(
+        f"Absolute throughput figure saved to {output_path}", fg=typer.colors.GREEN
+    )
+    plt.close(fig)
 
 
 def validate_pipeline_data(data: PipelineThroughput, label: str) -> bool:
