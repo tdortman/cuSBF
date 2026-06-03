@@ -163,160 +163,206 @@ def compute_overhead(host_tp: float, device_tp: float) -> tuple[float, float]:
     return kernel_fraction, overhead_pct
 
 
-def build_summary_rows(
-    hbm3: PipelineThroughput,
-    gddr7: PipelineThroughput,
-    workload: str,
-) -> list[OverheadRow]:
-    rows: list[OverheadRow] = []
-    for platform, data in ((_HBM3_LABEL, hbm3), (_GDDR7_LABEL, gddr7)):
-        for operation in _OPERATIONS:
-            host_tp = data.host.get(operation, 0.0)
-            device_tp = data.device.get(operation, 0.0)
-            _, overhead_pct = compute_overhead(host_tp, device_tp)
-            rows.append(
-                OverheadRow(
-                    platform=platform,
-                    workload=workload,
-                    operation=operation,
-                    host_gkmers_per_sec=host_tp,
-                    device_gkmers_per_sec=device_tp,
-                    overhead_pct=overhead_pct,
-                )
-            )
-    return rows
-
-
-def write_summary_csv(rows: list[OverheadRow], output_path: Path) -> None:
-    df = pd.DataFrame(
-        [
-            {
-                "platform": row.platform,
-                "workload": row.workload,
-                "operation": row.operation,
-                "host_gkmers_per_sec": row.host_gkmers_per_sec,
-                "device_gkmers_per_sec": row.device_gkmers_per_sec,
-                "overhead_pct": row.overhead_pct,
-            }
-            for row in rows
-        ]
-    )
-    df.to_csv(output_path, index=False)
-    typer.secho(f"Summary CSV saved to {output_path}", fg=typer.colors.GREEN)
-
-
 def plot_overhead_panel(
     ax: Axes,
     hbm3: PipelineThroughput,
     gddr7: PipelineThroughput,
-    title: str,
     show_ylabel: bool,
-) -> list[Patch]:
-    """Draw 100% stacked bars for host overhead on one workload subplot."""
-    legend_handles: list[Patch] = []
+    ylim: Optional[tuple[float, float]] = None,
+) -> list[Artist]:
+    """Draw host-sequence throughput bars for one workload subplot."""
+    legend_handles: list[Artist] = []
+    data_by_platform = {
+        _GDDR7_LABEL: gddr7,
+        _HBM3_LABEL: hbm3,
+    }
+    platforms = [(platform, data_by_platform[platform]) for platform in _PLATFORM_ORDER]
+    min_positive = float("inf")
+    max_throughput = 0.0
 
-    for op_idx, operation in enumerate(_OPERATIONS):
-        group_center = op_idx * _GROUP_SPACING
-        for plat_idx, (platform, data) in enumerate(
-            ((_HBM3_LABEL, hbm3), (_GDDR7_LABEL, gddr7))
-        ):
+    for platform_idx, (platform, data) in enumerate(platforms):
+        platform_center = platform_idx * _GROUP_SPACING
+        platform_color = _HBM3_COLOR if platform == _HBM3_LABEL else _GDDR7_COLOR
+        for op_idx, (operation, hatch) in enumerate(_BAR_OPERATIONS):
             host_tp = data.host.get(operation, 0.0)
             device_tp = data.device.get(operation, 0.0)
-            kernel_fraction, overhead_pct = compute_overhead(host_tp, device_tp)
-
-            x = group_center + (plat_idx - 0.5) * _PLATFORM_OFFSET
-            kernel_pct = kernel_fraction * 100.0
-            overhead_bar_pct = 100.0 - kernel_pct
+            _, overhead_pct = compute_overhead(host_tp, device_tp)
+            if host_tp > 0.0:
+                min_positive = min(min_positive, host_tp)
+            if device_tp > 0.0:
+                min_positive = min(min_positive, device_tp)
+            max_throughput = max(max_throughput, host_tp, device_tp)
+            x = platform_center + (op_idx - (len(_BAR_OPERATIONS) - 1) / 2) * _OP_STRIDE
 
             ax.bar(
                 x,
-                kernel_pct,
+                host_tp,
                 _BAR_WIDTH,
-                color=_KERNEL_COLOR,
+                color=platform_color,
                 edgecolor="black",
                 linewidth=pu.BAR_EDGE_WIDTH,
+                hatch=hatch,
                 zorder=3,
             )
-            ax.bar(
-                x,
-                overhead_bar_pct,
-                _BAR_WIDTH,
-                bottom=kernel_pct,
-                color=_OVERHEAD_COLOR,
-                edgecolor="black",
-                linewidth=pu.BAR_EDGE_WIDTH,
-                hatch=_OVERHEAD_HATCH,
-                zorder=3,
-            )
-
-            if overhead_pct > 0.0:
+            if device_tp > 0.0:
+                ax.hlines(
+                    device_tp,
+                    x - _BAR_WIDTH / 2,
+                    x + _BAR_WIDTH / 2,
+                    colors="black",
+                    linewidth=pu.REFERENCE_LINE_WIDTH,
+                    zorder=4,
+                )
+            if host_tp > 0.0 and device_tp > 0.0:
+                label_y = (
+                    host_tp * 1.10 if device_tp / host_tp > 1.35 else device_tp * 1.08
+                )
                 ax.text(
                     x,
-                    102.0,
+                    label_y,
                     f"{overhead_pct:.0f}%",
                     ha="center",
                     va="bottom",
                     fontsize=_ANNOTATION_FONT_SIZE,
+                    clip_on=False,
                 )
 
-            short_label = "GH200" if platform == _HBM3_LABEL else "RTX"
-            ax.text(
-                x,
-                -6.0,
-                short_label,
-                ha="center",
-                va="top",
-                fontsize=pu.TICK_LABEL_FONT_SIZE - 2,
-                rotation=0,
-            )
+    ax.set_xticks([])
+    ax.tick_params(axis="x", length=0)
+    if ylim is not None:
+        ax.set_yscale("log")
+        ax.set_ylim(*ylim)
+    elif max_throughput > 0.0 and min_positive < float("inf"):
+        ax.set_yscale("log")
+        ax.set_ylim(max(0.1, min_positive * 0.55), max_throughput * _YLIM_TOP_FACTOR)
+    else:
+        ax.set_ylim(0.1, 1.0)
+    pair_half_span = ((len(_BAR_OPERATIONS) - 1) / 2) * _OP_STRIDE + (_BAR_WIDTH / 2)
+    ax.set_xlim(
+        -pair_half_span - 0.18,
+        (len(platforms) - 1) * _GROUP_SPACING + pair_half_span + 0.18,
+    )
 
-    ax.set_xticks([idx * _GROUP_SPACING for idx in range(len(_OPERATIONS))])
-    ax.set_xticklabels(_OPERATIONS, fontsize=pu.TICK_LABEL_FONT_SIZE)
-    ax.set_ylim(0.0, 115.0)
-    ax.set_xlim(-0.55, (len(_OPERATIONS) - 1) * _GROUP_SPACING + 0.55)
-
+    ax.tick_params(axis="y", labelsize=_TICK_LABEL_FONT_SIZE)
     if show_ylabel:
-        ax.set_ylabel("Fraction of end-to-end time [%]", fontsize=pu.AXIS_LABEL_FONT_SIZE)
-    ax.set_title(title, fontsize=pu.TITLE_FONT_SIZE - 2, pad=8)
+        apply_throughput_ylabel(ax)
     ax.grid(True, axis="y", ls="--", alpha=pu.GRID_ALPHA)
 
-    legend_handles.append(
-        Patch(
-            facecolor=_KERNEL_COLOR,
-            edgecolor="black",
-            linewidth=pu.BAR_EDGE_WIDTH,
-            label="GPU kernel",
+    platform_colors = {
+        _GDDR7_LABEL: _GDDR7_COLOR,
+        _HBM3_LABEL: _HBM3_COLOR,
+    }
+    for platform in _PLATFORM_ORDER:
+        legend_handles.append(
+            Patch(
+                facecolor=platform_colors[platform],
+                edgecolor="black",
+                linewidth=pu.BAR_EDGE_WIDTH,
+                label=_PLATFORM_LEGEND_LABELS[platform],
+            )
         )
-    )
+    for operation, hatch in _BAR_OPERATIONS:
+        legend_handles.append(
+            Patch(
+                facecolor="gray",
+                edgecolor="black",
+                linewidth=pu.BAR_EDGE_WIDTH,
+                hatch=hatch,
+                label=operation,
+            )
+        )
     legend_handles.append(
-        Patch(
-            facecolor=_OVERHEAD_COLOR,
-            edgecolor="black",
-            linewidth=pu.BAR_EDGE_WIDTH,
-            hatch=_OVERHEAD_HATCH,
-            label="Host transfer overhead",
+        Line2D(
+            [0],
+            [0],
+            color="black",
+            linewidth=pu.REFERENCE_LINE_WIDTH,
+            label=_DEVICE_RESIDENT_LABEL,
         )
     )
     return legend_handles
+
+
+def split_overhead_legend_handles(
+    legend_handles: list[Artist],
+) -> tuple[list[Artist], list[Artist], list[Artist]]:
+    return legend_handles[:2], legend_handles[2:4], legend_handles[4:]
+
+
+def add_overhead_figure_legend(
+    ax: Axes,
+    platform_handles: list[Artist],
+    operation_handles: list[Artist],
+    marker_handles: list[Artist],
+) -> None:
+    """2x2 legend grid: platforms left; Insert/Query and device-resident marker right."""
+    legend_kwargs = {
+        "fontsize": _LEGEND_FONT_SIZE,
+        "frameon": False,
+        "handlelength": 1.2,
+        "handletextpad": 0.4,
+    }
+    top_y = _LEGEND_ABOVE_AXES_Y
+    bottom_y = top_y - _LEGEND_ROW_STEP
+
+    if len(platform_handles) >= 1:
+        top_platform_legend = ax.legend(
+            handles=[platform_handles[0]],
+            loc="lower left",
+            bbox_to_anchor=(0.0, top_y),
+            ncol=1,
+            **legend_kwargs,
+        )
+        ax.add_artist(top_platform_legend)
+
+    if operation_handles:
+        operation_legend = ax.legend(
+            handles=operation_handles,
+            loc="lower right",
+            bbox_to_anchor=(1.0, top_y),
+            ncol=2,
+            **legend_kwargs,
+        )
+        ax.add_artist(operation_legend)
+
+    if len(platform_handles) >= 2:
+        bottom_platform_legend = ax.legend(
+            handles=[platform_handles[1]],
+            loc="lower left",
+            bbox_to_anchor=(0.0, bottom_y),
+            ncol=1,
+            **legend_kwargs,
+        )
+        ax.add_artist(bottom_platform_legend)
+
+    if marker_handles:
+        ax.legend(
+            handles=marker_handles,
+            loc="lower right",
+            bbox_to_anchor=(1.0, bottom_y),
+            ncol=1,
+            **legend_kwargs,
+        )
 
 
 def plot_absolute_panel(
     ax: Axes,
     hbm3: PipelineThroughput,
     gddr7: PipelineThroughput,
-    title: str,
     show_ylabel: bool,
 ) -> None:
     """Grouped throughput bars (host vs device) for optional absolute comparison."""
     modes = [("Host sequence", "host"), ("Device sequence", "device")]
     n_modes = len(modes)
-    bar_width = 0.14
-
+    bar_width = 0.11
     for op_idx, operation in enumerate(_OPERATIONS):
         group_center = op_idx * _GROUP_SPACING
-        for plat_idx, (platform, data) in enumerate(
-            ((_HBM3_LABEL, hbm3), (_GDDR7_LABEL, gddr7))
-        ):
+        data_by_platform = {
+            _GDDR7_LABEL: gddr7,
+            _HBM3_LABEL: hbm3,
+        }
+        for plat_idx, platform in enumerate(_PLATFORM_ORDER):
+            data = data_by_platform[platform]
             plat_center = group_center + (plat_idx - 0.5) * _PLATFORM_OFFSET
             for mode_idx, (mode_label, mode_key) in enumerate(modes):
                 tp_dict = data.host if mode_key == "host" else data.device
