@@ -427,65 +427,34 @@ def save_overhead_figure(
         bottom=_SUBPLOT_BOTTOM_MARGIN,
         top=_SUBPLOT_TOP_MARGIN,
     )
-
-    pu.save_figure(
-        fig,
-        output_pdf,
-        message=f"Host overhead figure saved to {output_pdf}",
-        close=False,
+    platform_handles, operation_handles, marker_handles = split_overhead_legend_handles(
+        legend_handles
     )
+    add_overhead_figure_legend(
+        ax, platform_handles, operation_handles, marker_handles
+    )
+
     fig.savefig(
-        output_png,
-        bbox_inches="tight",
+        output_pdf,
+        pad_inches=_FIGURE_PAD_INCHES,
         transparent=True,
-        dpi=300,
-        format="png",
+        format="pdf",
+        dpi=600,
     )
-    typer.secho(f"Host overhead PNG saved to {output_png}", fg=typer.colors.GREEN)
+    typer.secho(pdf_message, fg=typer.colors.GREEN)
     plt.close(fig)
-
-    legend_path = output_pdf.with_name(f"{_OUTPUT_BASENAME}_legend.pdf")
-    legend_fig, legend_ax = plt.subplots(figsize=(3.2, 0.55))
-    legend_ax.axis("off")
-    legend_ax.legend(
-        handles=legend_handles,
-        loc="center",
-        ncol=2,
-        frameon=False,
-        fontsize=pu.LEGEND_FONT_SIZE - 2,
-    )
-    pu.save_figure(
-        legend_fig,
-        legend_path,
-        message=f"Legend saved to {legend_path}",
-    )
 
 
 def save_absolute_figure(
     output_path: Path,
-    small_hbm3: PipelineThroughput,
-    small_gddr7: PipelineThroughput,
-    large_hbm3: PipelineThroughput,
-    large_gddr7: PipelineThroughput,
+    hbm3: PipelineThroughput,
+    gddr7: PipelineThroughput,
 ) -> None:
-    fig, (ax_left, ax_right) = plt.subplots(
-        1,
-        2,
-        figsize=_SUBPLOT_FIGSIZE,
-        gridspec_kw={"wspace": _SUBPLOT_WSPACE},
-    )
+    fig, ax = plt.subplots(1, 1, figsize=_SUBPLOT_FIGSIZE)
     plot_absolute_panel(
-        ax_left,
-        small_hbm3,
-        small_gddr7,
-        title="Small workload",
-        show_ylabel=True,
-    )
-    plot_absolute_panel(
-        ax_right,
-        large_hbm3,
-        large_gddr7,
-        title="Large workload",
+        ax,
+        hbm3,
+        gddr7,
         show_ylabel=False,
     )
 
