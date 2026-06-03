@@ -7,7 +7,7 @@
 #   "typer",
 # ]
 # ///
-"""Plot cuSBF host-sequence transfer overhead vs device-resident kernels"""
+"""Plot cuSBF host-sequence throughput on GH200 vs RTX PRO 6000."""
 
 from __future__ import annotations
 
@@ -487,19 +487,11 @@ def validate_pipeline_data(data: PipelineThroughput, label: str) -> bool:
 
 @app.command()
 def main(
-    csv_hbm3_small: Path = typer.Argument(
-        ...,
-        help="GH200 (HBM3) cusbf-host-overhead CSV for small workload",
-    ),
-    csv_gddr7_small: Path = typer.Argument(
-        ...,
-        help="RTX PRO 6000 (GDDR7) cusbf-host-overhead CSV for small workload",
-    ),
-    csv_hbm3_large: Path = typer.Argument(
+    csv_hbm3: Path = typer.Argument(
         ...,
         help="GH200 (HBM3) cusbf-host-overhead CSV for large workload",
     ),
-    csv_gddr7_large: Path = typer.Argument(
+    csv_gddr7: Path = typer.Argument(
         ...,
         help="RTX PRO 6000 (GDDR7) cusbf-host-overhead CSV for large workload",
     ),
@@ -507,7 +499,7 @@ def main(
         None,
         "--output-dir",
         "-o",
-        help="Output directory for plots and summary CSV (default: build/)",
+        help="Output directory for plots (default: build/)",
     ),
     absolute: bool = typer.Option(
         False,
@@ -515,47 +507,45 @@ def main(
         help="Also emit grouped absolute-throughput PDF (host vs device GKmer/s)",
     ),
 ):
-    """Plot host-sequence transfer overhead from four benchmark CSV files."""
+    """Plot host-sequence transfer overhead from one large-workload CSV pair."""
     output_dir = pu.resolve_output_dir(output_dir, Path(__file__))
 
-    small_hbm3 = load_pipeline_throughput(csv_hbm3_small)
-    small_gddr7 = load_pipeline_throughput(csv_gddr7_small)
-    large_hbm3 = load_pipeline_throughput(csv_hbm3_large)
-    large_gddr7 = load_pipeline_throughput(csv_gddr7_large)
+    hbm3 = load_pipeline_throughput(csv_hbm3)
+    gddr7 = load_pipeline_throughput(csv_gddr7)
 
     if not all(
         validate_pipeline_data(data, str(path))
         for data, path in (
-            (small_hbm3, csv_hbm3_small),
-            (small_gddr7, csv_gddr7_small),
-            (large_hbm3, csv_hbm3_large),
-            (large_gddr7, csv_gddr7_large),
+            (hbm3, csv_hbm3),
+            (gddr7, csv_gddr7),
         )
     ):
         raise typer.Exit(1)
 
-    summary_rows = build_summary_rows(small_hbm3, small_gddr7, "small")
-    summary_rows.extend(build_summary_rows(large_hbm3, large_gddr7, "large"))
-    write_summary_csv(summary_rows, output_dir / f"{_OUTPUT_BASENAME}_summary.csv")
+    preview_fig, preview_ax = plt.subplots(1, 1, figsize=_SUBPLOT_FIGSIZE)
+    plot_overhead_panel(
+        preview_ax,
+        hbm3,
+        gddr7,
+        show_ylabel=True,
+    )
+    common_ylim = preview_ax.get_ylim()
+    plt.close(preview_fig)
 
     overhead_pdf = output_dir / f"{_OUTPUT_BASENAME}.pdf"
-    overhead_png = output_dir / f"{_OUTPUT_BASENAME}.png"
     save_overhead_figure(
         overhead_pdf,
-        overhead_png,
-        small_hbm3,
-        small_gddr7,
-        large_hbm3,
-        large_gddr7,
+        hbm3,
+        gddr7,
+        ylim=common_ylim,
+        pdf_message=f"Host throughput figure saved to {overhead_pdf}",
     )
 
     if absolute:
         save_absolute_figure(
             output_dir / f"{_OUTPUT_BASENAME}_absolute.pdf",
-            small_hbm3,
-            small_gddr7,
-            large_hbm3,
-            large_gddr7,
+            hbm3,
+            gddr7,
         )
 
 
