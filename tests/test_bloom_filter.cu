@@ -2,6 +2,7 @@
 #include <cuda/std/span>
 #include <string>
 
+#include <cusbf/dense_packed.hpp>
 #include <cusbf/device_span.cuh>
 
 #include "test_support.cuh"
@@ -16,6 +17,80 @@ TEST_F(BloomFilterTest, InsertAndQuerySameSequenceHasNoFalseNegatives) {
     ASSERT_EQ(inserted, sequence.size() - TestConfig::k + 1);
     ASSERT_EQ(hits.size(), inserted);
     EXPECT_TRUE(allOnes(hits));
+}
+
+TEST_F(BloomFilterTest, DensePackedMatchesByteSequenceInsertAndQuery) {
+    cusbf::filter<TestConfig> filter(1 << 12);
+
+    const std::string sequence = "ACGTACGTACGTACGTACGTACGT";
+    const std::vector<uint64_t> packed = cusbf::pack_dense_sequence<TestConfig>(sequence);
+    const uint64_t num_symbols = sequence.size();
+
+    const uint64_t inserted = CUSBF_UNWRAP(filter.insert_dense_packed(packed, num_symbols));
+    const auto hits = CUSBF_UNWRAP(filter.contains_dense_packed(packed, num_symbols));
+
+    ASSERT_EQ(inserted, num_symbols - TestConfig::k + 1);
+    ASSERT_EQ(hits.size(), inserted);
+    EXPECT_TRUE(allOnes(hits));
+
+    const auto byteHits = CUSBF_UNWRAP(filter.contains_sequence(sequence));
+    EXPECT_EQ(hits, byteHits);
+}
+
+TEST_F(BloomFilterTest, DensePackedDeviceAsyncMatchesHostPath) {
+    cusbf::filter<TestConfig> filter(1 << 12);
+
+    const std::string sequence = "ACGTACGTACGTACGT";
+    const std::vector<uint64_t> packed = cusbf::pack_dense_sequence<TestConfig>(sequence);
+    thrust::device_vector<uint64_t> d_packed(packed.begin(), packed.end());
+
+    const uint64_t inserted = CUSBF_UNWRAP(filter.insert_dense_packed_async(
+        cuda::std::span<const uint64_t>{
+            thrust::raw_pointer_cast(d_packed.data()), d_packed.size()
+        },
+        sequence.size()
+    ));
+    ASSERT_EQ(inserted, sequence.size() - TestConfig::k + 1);
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+
+    thrust::device_vector<uint8_t> d_output(inserted);
+    cusbf::require_void(filter.contains_dense_packed_async(
+        cuda::std::span<const uint64_t>{
+            thrust::raw_pointer_cast(d_packed.data()), d_packed.size()
+        },
+        sequence.size(),
+        cusbf::device_span<uint8_t>{
+            thrust::raw_pointer_cast(d_output.data()), d_output.size()
+        }
+    ));
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+
+    std::vector<uint8_t> hits(inserted);
+    CUSBF_CUDA_CALL(cudaMemcpy(
+        hits.data(),
+        thrust::raw_pointer_cast(d_output.data()),
+        hits.size(),
+        cudaMemcpyDeviceToHost
+    ));
+    EXPECT_TRUE(allOnes(hits));
+}
+
+TEST_F(BloomFilterTest, DensePackedProteinMatchesByteSequenceInsertAndQuery) {
+    cusbf::filter<ProteinTestConfig> filter(1 << 14);
+
+    const std::string sequence = "ACDEFGHIKLMNPQRSTVWYACDEF";
+    const std::vector<uint64_t> packed = cusbf::pack_dense_sequence<ProteinTestConfig>(sequence);
+    const uint64_t num_symbols = sequence.size();
+
+    const uint64_t inserted = CUSBF_UNWRAP(filter.insert_dense_packed(packed, num_symbols));
+    const auto hits = CUSBF_UNWRAP(filter.contains_dense_packed(packed, num_symbols));
+
+    ASSERT_EQ(inserted, num_symbols - ProteinTestConfig::k + 1);
+    ASSERT_EQ(hits.size(), inserted);
+    EXPECT_TRUE(allOnes(hits));
+
+    const auto byteHits = CUSBF_UNWRAP(filter.contains_sequence(sequence));
+    EXPECT_EQ(hits, byteHits);
 }
 
 TEST_F(BloomFilterTest, InvalidBasesResetForwardWindows) {
