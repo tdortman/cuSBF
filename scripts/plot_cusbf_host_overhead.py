@@ -1,0 +1,515 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "matplotlib",
+#   "pandas",
+#   "typer",
+# ]
+# ///
+"""Plot cuSBF host-sequence transfer overhead vs device-resident kernels"""
+
+from __future__ import annotations
+
+import io
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import plot_utils as pu
+import typer
+from matplotlib.axes import Axes
+from matplotlib.patches import Patch
+
+app = typer.Typer(help="Plot cuSBF host pipeline overhead from benchmark CSVs")
+
+_OPERATIONS = ["Insert", "Query"]
+_OUTPUT_BASENAME = "cusbf_host_overhead"
+_SUBPLOT_FIGSIZE = (7.2, 3.0)
+_SUBPLOT_LEFT_MARGIN = 0.10
+_SUBPLOT_RIGHT_MARGIN = 0.99
+_SUBPLOT_BOTTOM_MARGIN = 0.18
+_SUBPLOT_TOP_MARGIN = 0.90
+_SUBPLOT_WSPACE = 0.12
+
+_HBM3_LABEL = "GH200 (HBM3)"
+_GDDR7_LABEL = "RTX PRO 6000 (GDDR7)"
+_KERNEL_COLOR = pu.FILTER_COLORS["cusbf"]
+_OVERHEAD_COLOR = "#D1D5DB"
+_OVERHEAD_HATCH = "//"
+_BAR_WIDTH = 0.32
+_GROUP_SPACING = 1.35
+_PLATFORM_OFFSET = 0.18
+_ANNOTATION_FONT_SIZE = 9
+
+
+@dataclass(frozen=True)
+class PipelineThroughput:
+    host: dict[str, float]
+    device: dict[str, float]
+
+
+@dataclass(frozen=True)
+class OverheadRow:
+    platform: str
+    workload: str
+    operation: str
+    host_gkmers_per_sec: float
+    device_gkmers_per_sec: float
+    overhead_pct: float
+
+
+def parse_pipeline_mode(row: pd.Series, fixture_base: str) -> Optional[str]:
+    """Return ``host`` or ``device`` from fixture name or pipeline_mode counter."""
+    base = fixture_base.lower()
+    if "host" in base:
+        return "host"
+    if "device" in base:
+        return "device"
+
+    pipeline_mode = row.get("pipeline_mode")
+    if pd.notna(pipeline_mode):
+        if float(pipeline_mode) < 0.5:
+            return "host"
+        return "device"
+    return None
+
+
+def load_benchmark_csv(csv_path: Path) -> pd.DataFrame:
+    """Load a Google Benchmark CSV, skipping optional console metadata preamble."""
+    lines = csv_path.read_text().splitlines()
+    header_idx = next(
+        (idx for idx, line in enumerate(lines) if line.startswith("name,")),
+        0,
+    )
+    data = io.StringIO("\n".join(lines[header_idx:]))
+    header_df = pd.read_csv(data, nrows=0)
+    data.seek(0)
+    return pd.read_csv(data, usecols=list(header_df.columns))
+
+
+def load_pipeline_throughput(csv_path: Path) -> PipelineThroughput:
+    """Load host/device Insert/Query throughput [GKmer/s] from a benchmark CSV."""
+    df = load_benchmark_csv(csv_path)
+    df = df[df["name"].str.endswith("_median", na=False)]
+
+    host: dict[str, float] = {}
+    device: dict[str, float] = {}
+
+    for _, row in df.iterrows():
+        parsed = pu.parse_fixture_benchmark_name(row["name"])
+        if parsed is None:
+            continue
+
+        fixture_base, operation, _size = parsed
+        if operation not in _OPERATIONS:
+            continue
+
+        items_per_second = row.get("items_per_second")
+        if pd.isna(items_per_second):
+            continue
+
+        mode = parse_pipeline_mode(row, fixture_base)
+        if mode is None:
+            continue
+
+        throughput = pu.to_gkmers_per_sec(float(items_per_second))
+        if mode == "host":
+            host[operation] = throughput
+        else:
+            device[operation] = throughput
+
+    return PipelineThroughput(host=host, device=device)
+
+
+def compute_overhead(host_tp: float, device_tp: float) -> tuple[float, float]:
+    """Return (kernel_fraction, overhead_pct) from host/device throughput."""
+    if device_tp <= 0.0 or host_tp <= 0.0:
+        return 0.0, 0.0
+    kernel_fraction = min(1.0, host_tp / device_tp)
+    overhead_pct = max(0.0, (1.0 - kernel_fraction) * 100.0)
+    return kernel_fraction, overhead_pct
+
+
+def build_summary_rows(
+    hbm3: PipelineThroughput,
+    gddr7: PipelineThroughput,
+    workload: str,
+) -> list[OverheadRow]:
+    rows: list[OverheadRow] = []
+    for platform, data in ((_HBM3_LABEL, hbm3), (_GDDR7_LABEL, gddr7)):
+        for operation in _OPERATIONS:
+            host_tp = data.host.get(operation, 0.0)
+            device_tp = data.device.get(operation, 0.0)
+            _, overhead_pct = compute_overhead(host_tp, device_tp)
+            rows.append(
+                OverheadRow(
+                    platform=platform,
+                    workload=workload,
+                    operation=operation,
+                    host_gkmers_per_sec=host_tp,
+                    device_gkmers_per_sec=device_tp,
+                    overhead_pct=overhead_pct,
+                )
+            )
+    return rows
+
+
+def write_summary_csv(rows: list[OverheadRow], output_path: Path) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "platform": row.platform,
+                "workload": row.workload,
+                "operation": row.operation,
+                "host_gkmers_per_sec": row.host_gkmers_per_sec,
+                "device_gkmers_per_sec": row.device_gkmers_per_sec,
+                "overhead_pct": row.overhead_pct,
+            }
+            for row in rows
+        ]
+    )
+    df.to_csv(output_path, index=False)
+    typer.secho(f"Summary CSV saved to {output_path}", fg=typer.colors.GREEN)
+
+
+def plot_overhead_panel(
+    ax: Axes,
+    hbm3: PipelineThroughput,
+    gddr7: PipelineThroughput,
+    title: str,
+    show_ylabel: bool,
+) -> list[Patch]:
+    """Draw 100% stacked bars for host overhead on one workload subplot."""
+    legend_handles: list[Patch] = []
+
+    for op_idx, operation in enumerate(_OPERATIONS):
+        group_center = op_idx * _GROUP_SPACING
+        for plat_idx, (platform, data) in enumerate(
+            ((_HBM3_LABEL, hbm3), (_GDDR7_LABEL, gddr7))
+        ):
+            host_tp = data.host.get(operation, 0.0)
+            device_tp = data.device.get(operation, 0.0)
+            kernel_fraction, overhead_pct = compute_overhead(host_tp, device_tp)
+
+            x = group_center + (plat_idx - 0.5) * _PLATFORM_OFFSET
+            kernel_pct = kernel_fraction * 100.0
+            overhead_bar_pct = 100.0 - kernel_pct
+
+            ax.bar(
+                x,
+                kernel_pct,
+                _BAR_WIDTH,
+                color=_KERNEL_COLOR,
+                edgecolor="black",
+                linewidth=pu.BAR_EDGE_WIDTH,
+                zorder=3,
+            )
+            ax.bar(
+                x,
+                overhead_bar_pct,
+                _BAR_WIDTH,
+                bottom=kernel_pct,
+                color=_OVERHEAD_COLOR,
+                edgecolor="black",
+                linewidth=pu.BAR_EDGE_WIDTH,
+                hatch=_OVERHEAD_HATCH,
+                zorder=3,
+            )
+
+            if overhead_pct > 0.0:
+                ax.text(
+                    x,
+                    102.0,
+                    f"{overhead_pct:.0f}%",
+                    ha="center",
+                    va="bottom",
+                    fontsize=_ANNOTATION_FONT_SIZE,
+                )
+
+            short_label = "GH200" if platform == _HBM3_LABEL else "RTX"
+            ax.text(
+                x,
+                -6.0,
+                short_label,
+                ha="center",
+                va="top",
+                fontsize=pu.TICK_LABEL_FONT_SIZE - 2,
+                rotation=0,
+            )
+
+    ax.set_xticks([idx * _GROUP_SPACING for idx in range(len(_OPERATIONS))])
+    ax.set_xticklabels(_OPERATIONS, fontsize=pu.TICK_LABEL_FONT_SIZE)
+    ax.set_ylim(0.0, 115.0)
+    ax.set_xlim(-0.55, (len(_OPERATIONS) - 1) * _GROUP_SPACING + 0.55)
+
+    if show_ylabel:
+        ax.set_ylabel("Fraction of end-to-end time [%]", fontsize=pu.AXIS_LABEL_FONT_SIZE)
+    ax.set_title(title, fontsize=pu.TITLE_FONT_SIZE - 2, pad=8)
+    ax.grid(True, axis="y", ls="--", alpha=pu.GRID_ALPHA)
+
+    legend_handles.append(
+        Patch(
+            facecolor=_KERNEL_COLOR,
+            edgecolor="black",
+            linewidth=pu.BAR_EDGE_WIDTH,
+            label="GPU kernel",
+        )
+    )
+    legend_handles.append(
+        Patch(
+            facecolor=_OVERHEAD_COLOR,
+            edgecolor="black",
+            linewidth=pu.BAR_EDGE_WIDTH,
+            hatch=_OVERHEAD_HATCH,
+            label="Host transfer overhead",
+        )
+    )
+    return legend_handles
+
+
+def plot_absolute_panel(
+    ax: Axes,
+    hbm3: PipelineThroughput,
+    gddr7: PipelineThroughput,
+    title: str,
+    show_ylabel: bool,
+) -> None:
+    """Grouped throughput bars (host vs device) for optional absolute comparison."""
+    modes = [("Host sequence", "host"), ("Device sequence", "device")]
+    n_modes = len(modes)
+    bar_width = 0.14
+
+    for op_idx, operation in enumerate(_OPERATIONS):
+        group_center = op_idx * _GROUP_SPACING
+        for plat_idx, (platform, data) in enumerate(
+            ((_HBM3_LABEL, hbm3), (_GDDR7_LABEL, gddr7))
+        ):
+            plat_center = group_center + (plat_idx - 0.5) * _PLATFORM_OFFSET
+            for mode_idx, (mode_label, mode_key) in enumerate(modes):
+                tp_dict = data.host if mode_key == "host" else data.device
+                tp = tp_dict.get(operation, 0.0)
+                x = plat_center + (mode_idx - (n_modes - 1) / 2) * bar_width
+                alpha = 1.0 if mode_key == "device" else 0.55
+                hatch = _OVERHEAD_HATCH if mode_key == "host" else None
+                ax.bar(
+                    x,
+                    tp,
+                    bar_width,
+                    color=_KERNEL_COLOR,
+                    edgecolor="black",
+                    linewidth=pu.BAR_EDGE_WIDTH,
+                    alpha=alpha,
+                    hatch=hatch,
+                    zorder=3,
+                )
+
+    ax.set_xticks([idx * _GROUP_SPACING for idx in range(len(_OPERATIONS))])
+    ax.set_xticklabels(_OPERATIONS, fontsize=pu.TICK_LABEL_FONT_SIZE)
+    ax.set_xlim(-0.55, (len(_OPERATIONS) - 1) * _GROUP_SPACING + 0.55)
+
+    if show_ylabel:
+        ax.set_ylabel(pu.THROUGHPUT_LABEL, fontsize=pu.AXIS_LABEL_FONT_SIZE)
+    ax.set_title(title, fontsize=pu.TITLE_FONT_SIZE - 2, pad=8)
+    ax.grid(True, axis="y", ls="--", alpha=pu.GRID_ALPHA)
+
+
+def save_overhead_figure(
+    output_pdf: Path,
+    output_png: Path,
+    small_hbm3: PipelineThroughput,
+    small_gddr7: PipelineThroughput,
+    large_hbm3: PipelineThroughput,
+    large_gddr7: PipelineThroughput,
+) -> None:
+    fig, (ax_left, ax_right) = plt.subplots(
+        1,
+        2,
+        figsize=_SUBPLOT_FIGSIZE,
+        gridspec_kw={"wspace": _SUBPLOT_WSPACE},
+    )
+    legend_handles = plot_overhead_panel(
+        ax_left,
+        small_hbm3,
+        small_gddr7,
+        title="Small workload",
+        show_ylabel=True,
+    )
+    plot_overhead_panel(
+        ax_right,
+        large_hbm3,
+        large_gddr7,
+        title="Large workload",
+        show_ylabel=False,
+    )
+
+    fig.subplots_adjust(
+        left=_SUBPLOT_LEFT_MARGIN,
+        right=_SUBPLOT_RIGHT_MARGIN,
+        bottom=_SUBPLOT_BOTTOM_MARGIN,
+        top=_SUBPLOT_TOP_MARGIN,
+    )
+
+    pu.save_figure(
+        fig,
+        output_pdf,
+        message=f"Host overhead figure saved to {output_pdf}",
+        close=False,
+    )
+    fig.savefig(
+        output_png,
+        bbox_inches="tight",
+        transparent=True,
+        dpi=300,
+        format="png",
+    )
+    typer.secho(f"Host overhead PNG saved to {output_png}", fg=typer.colors.GREEN)
+    plt.close(fig)
+
+    legend_path = output_pdf.with_name(f"{_OUTPUT_BASENAME}_legend.pdf")
+    legend_fig, legend_ax = plt.subplots(figsize=(3.2, 0.55))
+    legend_ax.axis("off")
+    legend_ax.legend(
+        handles=legend_handles,
+        loc="center",
+        ncol=2,
+        frameon=False,
+        fontsize=pu.LEGEND_FONT_SIZE - 2,
+    )
+    pu.save_figure(
+        legend_fig,
+        legend_path,
+        message=f"Legend saved to {legend_path}",
+    )
+
+
+def save_absolute_figure(
+    output_path: Path,
+    small_hbm3: PipelineThroughput,
+    small_gddr7: PipelineThroughput,
+    large_hbm3: PipelineThroughput,
+    large_gddr7: PipelineThroughput,
+) -> None:
+    fig, (ax_left, ax_right) = plt.subplots(
+        1,
+        2,
+        figsize=_SUBPLOT_FIGSIZE,
+        gridspec_kw={"wspace": _SUBPLOT_WSPACE},
+    )
+    plot_absolute_panel(
+        ax_left,
+        small_hbm3,
+        small_gddr7,
+        title="Small workload",
+        show_ylabel=True,
+    )
+    plot_absolute_panel(
+        ax_right,
+        large_hbm3,
+        large_gddr7,
+        title="Large workload",
+        show_ylabel=False,
+    )
+
+    fig.subplots_adjust(
+        left=_SUBPLOT_LEFT_MARGIN,
+        right=_SUBPLOT_RIGHT_MARGIN,
+        bottom=_SUBPLOT_BOTTOM_MARGIN,
+        top=_SUBPLOT_TOP_MARGIN,
+    )
+    pu.save_figure(
+        fig,
+        output_path,
+        message=f"Absolute throughput figure saved to {output_path}",
+    )
+
+
+def validate_pipeline_data(data: PipelineThroughput, label: str) -> bool:
+    if not data.host and not data.device:
+        typer.secho(
+            f"No cuSBF host/device throughput rows found in {label}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        return False
+    return True
+
+
+@app.command()
+def main(
+    csv_hbm3_small: Path = typer.Argument(
+        ...,
+        help="GH200 (HBM3) cusbf-host-overhead CSV for small workload",
+    ),
+    csv_gddr7_small: Path = typer.Argument(
+        ...,
+        help="RTX PRO 6000 (GDDR7) cusbf-host-overhead CSV for small workload",
+    ),
+    csv_hbm3_large: Path = typer.Argument(
+        ...,
+        help="GH200 (HBM3) cusbf-host-overhead CSV for large workload",
+    ),
+    csv_gddr7_large: Path = typer.Argument(
+        ...,
+        help="RTX PRO 6000 (GDDR7) cusbf-host-overhead CSV for large workload",
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None,
+        "--output-dir",
+        "-o",
+        help="Output directory for plots and summary CSV (default: build/)",
+    ),
+    absolute: bool = typer.Option(
+        False,
+        "--absolute",
+        help="Also emit grouped absolute-throughput PDF (host vs device GKmer/s)",
+    ),
+):
+    """Plot host-sequence transfer overhead from four benchmark CSV files."""
+    output_dir = pu.resolve_output_dir(output_dir, Path(__file__))
+
+    small_hbm3 = load_pipeline_throughput(csv_hbm3_small)
+    small_gddr7 = load_pipeline_throughput(csv_gddr7_small)
+    large_hbm3 = load_pipeline_throughput(csv_hbm3_large)
+    large_gddr7 = load_pipeline_throughput(csv_gddr7_large)
+
+    if not all(
+        validate_pipeline_data(data, str(path))
+        for data, path in (
+            (small_hbm3, csv_hbm3_small),
+            (small_gddr7, csv_gddr7_small),
+            (large_hbm3, csv_hbm3_large),
+            (large_gddr7, csv_gddr7_large),
+        )
+    ):
+        raise typer.Exit(1)
+
+    summary_rows = build_summary_rows(small_hbm3, small_gddr7, "small")
+    summary_rows.extend(build_summary_rows(large_hbm3, large_gddr7, "large"))
+    write_summary_csv(summary_rows, output_dir / f"{_OUTPUT_BASENAME}_summary.csv")
+
+    overhead_pdf = output_dir / f"{_OUTPUT_BASENAME}.pdf"
+    overhead_png = output_dir / f"{_OUTPUT_BASENAME}.png"
+    save_overhead_figure(
+        overhead_pdf,
+        overhead_png,
+        small_hbm3,
+        small_gddr7,
+        large_hbm3,
+        large_gddr7,
+    )
+
+    if absolute:
+        save_absolute_figure(
+            output_dir / f"{_OUTPUT_BASENAME}_absolute.pdf",
+            small_hbm3,
+            small_gddr7,
+            large_hbm3,
+            large_gddr7,
+        )
+
+
+if __name__ == "__main__":
+    app()
