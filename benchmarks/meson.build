@@ -14,6 +14,10 @@ bench_deps = [benchmark_dep, cusbf_dep]
 superbloom_cpu_dep = subproject('superbloom-cpu').get_variable('superbloom_cpu_dep')
 
 benchmarks = {
+    'cusbf-host-overhead': {
+        'src': 'cusbf_host_overhead.cu',
+        'deps': [],
+    },
     'filter-comparison': {
         'src': 'filter_comparison.cu',
         'deps': [cuco_dep, cuckoogpu_dep, superbloom_cpu_dep, gqf_dep, tcf_dep],
