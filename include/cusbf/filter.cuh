@@ -30,9 +30,10 @@
 #include <cusbf/config.cuh>
 #include <cusbf/detail/chunk_stream_pair.cuh>
 #include <cusbf/detail/count_positive_kmers.cuh>
+#include <cusbf/detail/dense_packed.cuh>
 #include <cusbf/detail/fastx_chunk.cuh>
-#include <cusbf/detail/fastx_dispatch.hpp>
 #include <cusbf/detail/fastx_dense_batch.hpp>
+#include <cusbf/detail/fastx_dispatch.hpp>
 #include <cusbf/detail/fastx_host_limits.cuh>
 #include <cusbf/detail/fastx_pinned_buffer.hpp>
 #include <cusbf/detail/filter_impl.cuh>
@@ -181,6 +182,127 @@ class filter {
 
         CUSBF_TRY(launch_insert_sequence(d_sequence, stream));
         return totalKmers;
+    }
+
+    /**
+     * @brief Inserts all k-mers from a dense packed symbol buffer on the device.
+     *
+     * @p d_words stores @ref dense_packed_word_count(num_symbols) words using
+     * @ref Config::symbolBits per encoded symbol. Adjacent k-mers overlap in the same
+     * @c uint64_t chunks; this path decodes a per-block symbol tile and slides packed
+     * k-mers like @ref insert_sequence_async.
+     *
+     * Does **not** synchronise the stream.
+     *
+     * @param d_words       Device-resident dense packed sequence.
+     * @param num_symbols   Number of valid encoded symbols in @p d_words.
+     * @param stream        CUDA stream to use.
+     * @return Number of k-mers attempted.
+     */
+    [[nodiscard]] Result<uint64_t> insert_dense_packed_async(
+        cuda::std::span<const uint64_t> d_words,
+        uint64_t num_symbols,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) {
+        const uint64_t totalKmers = dense_packed_kmer_count(num_symbols);
+        if (totalKmers == 0) {
+            return 0;
+        }
+
+        CUSBF_TRY(launch_insert_dense_packed(
+            device_span<const uint64_t>{d_words.data(), d_words.size()}, num_symbols, stream
+        ));
+        return totalKmers;
+    }
+
+    /**
+     * @brief Inserts all k-mers from a host-resident dense packed symbol buffer.
+     *
+     * Copies @p d_words to device staging, launches the insert kernel, and synchronises.
+     */
+    [[nodiscard]] Result<uint64_t> insert_dense_packed(
+        cuda::std::span<const uint64_t> d_words,
+        uint64_t num_symbols,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) {
+        const uint64_t totalKmers = dense_packed_kmer_count(num_symbols);
+        if (totalKmers == 0) {
+            return 0;
+        }
+
+        const auto staged = CUSBF_TRY(staged_dense_packed_view(d_words, stream));
+        CUSBF_TRY(launch_insert_dense_packed(staged, num_symbols, stream));
+        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+        return totalKmers;
+    }
+
+    /**
+     * @brief Async query of k-mers from a dense packed symbol buffer on the device.
+     *
+     * @p d_output receives one byte per k-mer (1 = present, 0 = absent). Does **not**
+     * synchronise the stream.
+     */
+    [[nodiscard]] Result<void> contains_dense_packed_async(
+        cuda::std::span<const uint64_t> d_words,
+        uint64_t num_symbols,
+        device_span<uint8_t> d_output,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        if (dense_packed_kmer_count(num_symbols) == 0) {
+            return {};
+        }
+
+        return launch_contains_dense_packed(
+            device_span<const uint64_t>{d_words.data(), d_words.size()},
+            num_symbols,
+            d_output,
+            stream
+        );
+    }
+
+    /**
+     * @brief Queries all k-mers from a host-resident dense packed symbol buffer.
+     *
+     * Copies @p d_words to device, queries, copies results back, and synchronises.
+     */
+    [[nodiscard]] Result<std::vector<uint8_t>> contains_dense_packed(
+        cuda::std::span<const uint64_t> d_words,
+        uint64_t num_symbols,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        const uint64_t numKmers = dense_packed_kmer_count(num_symbols);
+        if (numKmers == 0) {
+            return std::vector<uint8_t>{};
+        }
+
+        std::vector<uint8_t> output(numKmers);
+        const auto staged = CUSBF_TRY(staged_dense_packed_view(d_words, stream));
+        ensure_result_capacity(output.size());
+        CUSBF_TRY(launch_contains_dense_packed(
+            staged,
+            num_symbols,
+            device_span<uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), output.size()},
+            stream
+        ));
+        CUSBF_CUDA_TRY(cudaMemcpyAsync(
+            output.data(),
+            thrust::raw_pointer_cast(d_resultBuffer_.data()),
+            output.size() * sizeof(uint8_t),
+            cudaMemcpyDeviceToHost,
+            stream.get()
+        ));
+        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+        return output;
+    }
+
+    /// @brief Number of @c uint64_t words for @p num_symbols dense packed symbols.
+    [[nodiscard]] static constexpr uint64_t dense_packed_word_count(uint64_t num_symbols) {
+        return detail::dense_packed_word_count<Config>(num_symbols);
+    }
+
+    /// @brief Number of k-mer windows in a dense packed sequence of @p num_symbols symbols.
+    [[nodiscard]] uint64_t dense_packed_kmer_count(uint64_t num_symbols) const {
+        return detail::dense_packed_kmer_count<Config>(num_symbols);
     }
 
     /**
@@ -594,6 +716,7 @@ class filter {
 
     thrust::device_vector<block_type> d_shards_;
     mutable thrust::device_vector<char> d_sequence_;
+    mutable thrust::device_vector<uint64_t> d_dense_packed_words_;
     mutable std::array<thrust::device_vector<char>, 2> d_sequence_pings_;
     mutable thrust::device_vector<uint8_t> d_resultBuffer_;
     mutable thrust::device_vector<NormalizedRecord> d_normalized_records_;
@@ -623,6 +746,7 @@ class filter {
 
     void release_fastx_device_staging() const {
         thrust::device_vector<char>{}.swap(d_sequence_);
+        thrust::device_vector<uint64_t>{}.swap(d_dense_packed_words_);
         for (thrust::device_vector<char>& buffer : d_sequence_pings_) {
             thrust::device_vector<char>{}.swap(buffer);
         }
@@ -1448,6 +1572,89 @@ class filter {
     /// @brief Number of k-mer windows in a device-resident encoded sequence.
     [[nodiscard]] static uint64_t sequence_kmer_count(device_span<const char> d_sequence) {
         return detail::SequenceKmerInput<Config>{d_sequence}.kmerCount();
+    }
+
+    void ensure_dense_packed_capacity(uint64_t words) const {
+        if (words > d_dense_packed_words_.size()) {
+            d_dense_packed_words_.resize(words);
+        }
+    }
+
+    Result<void>
+    stage_dense_packed(cuda::std::span<const uint64_t> words, cuda::stream_ref stream) const {
+        ensure_dense_packed_capacity(words.size());
+        CUSBF_CUDA_TRY(cudaMemcpyAsync(
+            thrust::raw_pointer_cast(d_dense_packed_words_.data()),
+            words.data(),
+            words.size_bytes(),
+            cudaMemcpyHostToDevice,
+            stream.get()
+        ));
+        return {};
+    }
+
+    [[nodiscard]] Result<device_span<const uint64_t>>
+    staged_dense_packed_view(cuda::std::span<const uint64_t> words, cuda::stream_ref stream) const {
+        CUSBF_TRY(stage_dense_packed(words, stream));
+        return device_span<const uint64_t>{
+            thrust::raw_pointer_cast(d_dense_packed_words_.data()), words.size()
+        };
+    }
+
+    Result<void> launch_insert_dense_packed(
+        device_span<const uint64_t> d_words,
+        uint64_t num_symbols,
+        cuda::stream_ref stream
+    ) {
+        const detail::DensePackedKmerInput<Config> input{d_words, num_symbols};
+        const uint64_t numKmers = input.kmerCount();
+        if (numKmers == 0) {
+            return {};
+        }
+        if (d_words.size() < dense_packed_word_count(num_symbols)) {
+            return Err(Error::invalid_argument("dense packed span is too small for num_symbols"));
+        }
+
+        const uint64_t gridSize = cuda::ceil_div(numKmers, Config::cudaBlockSize);
+        detail::insert_dense_packed_kmers_kernel<Config>
+            <<<gridSize, Config::cudaBlockSize, 0, stream.get()>>>(
+                input,
+                device_span<block_type>{thrust::raw_pointer_cast(d_shards_.data()), num_shards_}
+            );
+        CUSBF_CUDA_TRY(cudaGetLastError());
+        return {};
+    }
+
+    Result<void> launch_contains_dense_packed(
+        device_span<const uint64_t> d_words,
+        uint64_t num_symbols,
+        device_span<uint8_t> d_output,
+        cuda::stream_ref stream
+    ) const {
+        const detail::DensePackedKmerInput<Config> input{d_words, num_symbols};
+        const uint64_t numKmers = input.kmerCount();
+        if (numKmers == 0) {
+            return {};
+        }
+        if (d_words.size() < dense_packed_word_count(num_symbols)) {
+            return Err(Error::invalid_argument("dense packed span is too small for num_symbols"));
+        }
+        if (d_output.size() < numKmers) {
+            return Err(Error::invalid_argument("dense packed query output span is too small"));
+        }
+
+        const uint64_t gridSize =
+            cuda::ceil_div(numKmers, Config::cudaBlockSize * detail::kContainsSequenceStride);
+        detail::contains_dense_packed_kmers_kernel<Config>
+            <<<gridSize, Config::cudaBlockSize, 0, stream.get()>>>(
+                input,
+                device_span<const block_type>{
+                    thrust::raw_pointer_cast(d_shards_.data()), num_shards_
+                },
+                d_output
+            );
+        CUSBF_CUDA_TRY(cudaGetLastError());
+        return {};
     }
 
     /**
