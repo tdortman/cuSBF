@@ -143,6 +143,17 @@ def load_pipeline_throughput(csv_path: Path) -> PipelineThroughput:
     return PipelineThroughput(host=host, device=device)
 
 
+def apply_throughput_ylabel(ax: Axes) -> None:
+    """Bold throughput y-label sized to fit this short panel without clipping."""
+    ax.set_ylabel(
+        pu.THROUGHPUT_LABEL,
+        fontsize=_YLABEL_FONT_SIZE,
+        fontweight="bold",
+        labelpad=3,
+    )
+    ax.yaxis.set_label_coords(_YLABEL_COORD_X, 0.5)
+
+
 def compute_overhead(host_tp: float, device_tp: float) -> tuple[float, float]:
     """Return (kernel_fraction, overhead_pct) from host/device throughput."""
     if device_tp <= 0.0 or host_tp <= 0.0:
