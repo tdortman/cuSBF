@@ -151,7 +151,7 @@ TEST_F(BloomFilterTest, RecordBatchInsertAndQueryInjectRecordBoundaries) {
     };
     const auto batch = cusbf::RecordBatchView{
         denseSequence,
-        cuda::std::span<const cusbf::RecordRange>{ranges.data(), ranges.size()},
+        std::span<const cusbf::RecordRange>{ranges.data(), ranges.size()},
     };
 
     const auto insertReport = CUSBF_UNWRAP(filter.insert_record_batch(batch));

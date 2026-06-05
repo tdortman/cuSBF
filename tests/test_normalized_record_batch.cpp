@@ -1,15 +1,15 @@
 #include <gtest/gtest.h>
 #include <cusbf/error.hpp>
 
+#include <array>
+
 #include <cusbf/normalized_record_batch.hpp>
 
 using TestConfig = cusbf::Config<3, 2, 2, 4>;
 
 TEST(NormalizedRecordBatchTest, InjectsSeparatorsBetweenRecords) {
-    const cusbf::RecordBatchView batch{
-        "ACGTACGTACGT",
-        {{0, 4}, {4, 4}},
-    };
+    const std::array<cusbf::RecordRange, 2> ranges{{{0, 4}, {4, 4}}};
+    const cusbf::RecordBatchView batch{"ACGTACGTACGT", ranges};
 
     const auto normalized = CUSBF_UNWRAP(cusbf::normalize_record_batch<TestConfig>(batch));
     ASSERT_EQ(normalized.records().size(), 2U);
@@ -18,10 +18,8 @@ TEST(NormalizedRecordBatchTest, InjectsSeparatorsBetweenRecords) {
 }
 
 TEST(NormalizedRecordBatchTest, RejectsOverlappingRanges) {
-    const cusbf::RecordBatchView batch{
-        "ACGTACGT",
-        {{4, 4}, {0, 4}},
-    };
+    const std::array<cusbf::RecordRange, 2> ranges{{{4, 4}, {0, 4}}};
+    const cusbf::RecordBatchView batch{"ACGTACGT", ranges};
 
     const auto normalized = cusbf::normalize_record_batch<TestConfig>(batch);
     ASSERT_FALSE(normalized);
@@ -29,10 +27,8 @@ TEST(NormalizedRecordBatchTest, RejectsOverlappingRanges) {
 }
 
 TEST(NormalizedRecordBatchTest, PreservesRecordOrderMetadata) {
-    const cusbf::RecordBatchView batch{
-        "ACGTACGTACGT",
-        {{0, 4}, {4, 4}},
-    };
+    const std::array<cusbf::RecordRange, 2> ranges{{{0, 4}, {4, 4}}};
+    const cusbf::RecordBatchView batch{"ACGTACGTACGT", ranges};
 
     const auto normalized = CUSBF_UNWRAP(cusbf::normalize_record_batch<TestConfig>(batch));
     ASSERT_EQ(normalized.records().size(), 2U);
