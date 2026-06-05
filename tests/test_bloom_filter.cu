@@ -186,6 +186,28 @@ TEST_F(BloomFilterTest, DeviceOutputMatchesHostContainsResults) {
     EXPECT_EQ(deviceHits, hostHits);
 }
 
+TEST_F(BloomFilterTest, HostSequenceDeviceOutputMatchesHostContainsResults) {
+    cusbf::filter<TestConfig> filter(1 << 13);
+
+    const std::string insertedSequence = "ACGTACGTACGTACGTACGTACGT";
+    const std::string querySequence = "TACGTACGTACGTACGTACGTACG";
+    (void)CUSBF_UNWRAP(filter.insert_sequence(insertedSequence));
+
+    const auto hostHits = CUSBF_UNWRAP(filter.contains_sequence(querySequence));
+    ASSERT_FALSE(hostHits.empty());
+
+    thrust::device_vector<uint8_t> d_output(hostHits.size());
+    cusbf::require_void(filter.contains_sequence(
+        querySequence,
+        cusbf::device_span<uint8_t>{thrust::raw_pointer_cast(d_output.data()), d_output.size()}
+    ));
+
+    std::vector<uint8_t> deviceHits(hostHits.size());
+    thrust::copy(d_output.begin(), d_output.end(), deviceHits.begin());
+
+    EXPECT_EQ(deviceHits, hostHits);
+}
+
 TEST_F(BloomFilterTest, MultipleInsertionsRemainQueryable) {
     cusbf::filter<TestConfig> filter(1 << 14);
 
