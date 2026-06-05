@@ -254,6 +254,29 @@ class filter {
     }
 
     /**
+     * @brief Queries all k-mers from a host-resident dense packed symbol buffer into device memory.
+     *
+     * Copies @p words to device, launches the query kernel into @p d_output, and synchronises.
+     * Does not allocate the result buffer or copy hits back to the host.
+     */
+    [[nodiscard]] Result<void> contains_dense_packed(
+        std::span<const uint64_t> words,
+        uint64_t num_symbols,
+        device_span<uint8_t> d_output,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        const uint64_t numKmers = dense_packed_kmer_count(num_symbols);
+        if (numKmers == 0) {
+            return {};
+        }
+
+        const auto staged = CUSBF_TRY(staged_dense_packed_view(words, stream));
+        CUSBF_TRY(launch_contains_dense_packed(staged, num_symbols, d_output, stream));
+        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+        return {};
+    }
+
+    /**
      * @brief Queries all k-mers from a host-resident dense packed symbol buffer.
      *
      * Copies @p d_words to device, queries, copies results back, and synchronises.
@@ -269,22 +292,17 @@ class filter {
         }
 
         std::vector<uint8_t> output(numKmers);
-        const auto staged = CUSBF_TRY(staged_dense_packed_view(words, stream));
         ensure_result_capacity(output.size());
-        CUSBF_TRY(launch_contains_dense_packed(
-            staged,
-            num_symbols,
-            device_span<uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), output.size()},
-            stream
-        ));
-        CUSBF_CUDA_TRY(cudaMemcpyAsync(
+        const device_span<uint8_t> d_output{
+            thrust::raw_pointer_cast(d_resultBuffer_.data()), output.size()
+        };
+        CUSBF_TRY(contains_dense_packed(words, num_symbols, d_output, stream));
+        CUSBF_CUDA_TRY(cudaMemcpy(
             output.data(),
             thrust::raw_pointer_cast(d_resultBuffer_.data()),
             output.size() * sizeof(uint8_t),
-            cudaMemcpyDeviceToHost,
-            stream.get()
+            cudaMemcpyDeviceToHost
         ));
-        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
         return output;
     }
 
@@ -409,6 +427,32 @@ class filter {
     }
 
     /**
+     * @brief Queries all valid k-mers from a host-resident sequence into device memory.
+     *
+     * Copies the sequence to device, launches the query kernel into @p d_output, and
+     * synchronises. Does not allocate the result buffer or copy hits back to the host.
+     *
+     * @param sequence   Raw nucleotide sequence.
+     * @param d_output   Per-k-mer result buffer (must hold kmerCount() bytes).
+     * @param stream     CUDA stream to use.
+     */
+    [[nodiscard]] Result<void> contains_sequence(
+        std::string_view sequence,
+        device_span<uint8_t> d_output,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        if (record_symbol_count(sequence.size()) < Config::k) {
+            return {};
+        }
+
+        const auto d_sequence =
+            CUSBF_TRY(staged_sequence_view({sequence.data(), sequence.size()}, stream));
+        CUSBF_TRY(launch_contains_sequence(d_sequence, d_output, stream));
+        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+        return {};
+    }
+
+    /**
      * @brief Queries all valid k-mers from a host-resident sequence.
      *
      * Copies the sequence to device, queries, copies results back, and
@@ -426,24 +470,17 @@ class filter {
         }
 
         std::vector<uint8_t> output(record_kmer_count(sequence.size()));
-
-        const auto d_sequence =
-            CUSBF_TRY(staged_sequence_view({sequence.data(), sequence.size()}, stream));
         ensure_result_capacity(output.size());
-        CUSBF_TRY(launch_contains_sequence(
-            d_sequence,
-            device_span<uint8_t>{thrust::raw_pointer_cast(d_resultBuffer_.data()), output.size()},
-            stream
-        ));
-        CUSBF_CUDA_TRY(cudaMemcpyAsync(
+        const device_span<uint8_t> d_output{
+            thrust::raw_pointer_cast(d_resultBuffer_.data()), output.size()
+        };
+        CUSBF_TRY(contains_sequence(sequence, d_output, stream));
+        CUSBF_CUDA_TRY(cudaMemcpy(
             output.data(),
             thrust::raw_pointer_cast(d_resultBuffer_.data()),
             output.size() * sizeof(uint8_t),
-            cudaMemcpyDeviceToHost,
-            stream.get()
+            cudaMemcpyDeviceToHost
         ));
-
-        CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
         return output;
     }
 
