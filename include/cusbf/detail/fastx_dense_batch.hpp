@@ -2,9 +2,9 @@
 
 #include <type_traits>
 
-#include <cusbf/Fastx.hpp>
 #include <cusbf/detail/fastx_buffer_reader.hpp>
 #include <cusbf/error.hpp>
+#include <cusbf/Fastx.hpp>
 
 namespace cusbf::detail {
 

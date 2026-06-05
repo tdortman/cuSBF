@@ -126,11 +126,10 @@ template <typename Config>
 }
 
 template <typename T>
-concept cusbf_result_like =
-    requires {
-        typename T::value_type;
-        typename T::error_type;
-    } && std::same_as<typename T::error_type, cusbf::Error>;
+concept cusbf_result_like = requires {
+    typename T::value_type;
+    typename T::error_type;
+} && std::same_as<typename T::error_type, cusbf::Error>;
 
 /// @brief Return type of a @ref fastx_dispatch_handler when invoked with a stream reader.
 template <typename Handler>

@@ -291,7 +291,6 @@ BENCHMARK_DEFINE_F(CucoBloomFixture, Insert)(bm::State& state) {
     setThroughputCounters(state, s.filter_bits, s.filterMemory, s.numKmers);
 }
 
-
 BENCHMARK_DEFINE_F(CucoBloomFixture, Query)(bm::State& state) {
     auto& fix = *static_cast<CucoBloomFixture*>(this);
     auto& s = fix.setup;
@@ -377,10 +376,7 @@ BENCHMARK_DEFINE_F(GqfFixture, Query)(bm::State& state) {
     for (auto _ : state) {
         fix.timer.start();
         gqf_tcf::gqfBulkGet(
-            s.handle,
-            s.numKmers,
-            keys,
-            thrust::raw_pointer_cast(s.queryResults.data())
+            s.handle, s.numKmers, keys, thrust::raw_pointer_cast(s.queryResults.data())
         );
         state.SetIterationTime(fix.timer.elapsed());
         bm::DoNotOptimize(thrust::raw_pointer_cast(s.queryResults.data()));

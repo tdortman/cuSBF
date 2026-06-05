@@ -52,8 +52,7 @@ inline void convertGqfResults(thrust::device_vector<uint64_t>& results) {
     }
     uint64_t* data = thrust::raw_pointer_cast(results.data());
     constexpr unsigned kBlockSize = 256;
-    const unsigned grid =
-        static_cast<unsigned>((count + kBlockSize - 1) / kBlockSize);
+    const unsigned grid = static_cast<unsigned>((count + kBlockSize - 1) / kBlockSize);
     detail::convertGqfResultsKernel<<<grid, kBlockSize>>>(data, count);
     CUSBF_CUDA_CALL(cudaGetLastError());
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
@@ -75,8 +74,8 @@ inline uint64_t gqfMinCapacityForItems(uint64_t numItems) {
 }
 
 inline uint64_t gqfMinFilterBitsForItems(uint64_t numItems) {
-    return gqfCapacity(gqfExponent(std::max(gqfMinCapacityForItems(numItems), uint64_t{1})))
-           * static_cast<uint64_t>(QF_BITS_PER_SLOT);
+    return gqfCapacity(gqfExponent(std::max(gqfMinCapacityForItems(numItems), uint64_t{1}))) *
+           static_cast<uint64_t>(QF_BITS_PER_SLOT);
 }
 
 inline uint64_t gqfCapacityForFilterBits(uint64_t filterBits) {
@@ -86,7 +85,8 @@ inline uint64_t gqfCapacityForFilterBits(uint64_t filterBits) {
 }
 
 inline bool gqfSupportsItemsForFilterBits(uint64_t filterBits, uint64_t numItems) {
-    return gqfCapacityForFilterBits(filterBits) >= std::max(gqfMinCapacityForItems(numItems), uint64_t{1});
+    return gqfCapacityForFilterBits(filterBits) >=
+           std::max(gqfMinCapacityForItems(numItems), uint64_t{1});
 }
 
 inline uint64_t tcfCapacityForItems(uint64_t numItems) {
@@ -104,7 +104,8 @@ inline uint64_t tcfCapacityForFilterBits(uint64_t filterBits) {
 }
 
 inline bool tcfSupportsItemsForFilterBits(uint64_t filterBits, uint64_t numItems) {
-    return tcfCapacityForFilterBits(filterBits) >= std::max(tcfCapacityForItems(numItems), uint64_t{1});
+    return tcfCapacityForFilterBits(filterBits) >=
+           std::max(tcfCapacityForItems(numItems), uint64_t{1});
 }
 
 struct GqfHandle {
@@ -354,7 +355,6 @@ struct TcfHandle {
             bulkQueryPrepared(n);
         }
     }
-
 };
 
 inline void copyPackedKmers(
@@ -374,6 +374,5 @@ inline void gqfBulkGet(GqfHandle& handle, uint64_t count, uint64_t* keys, uint64
     bulk_get(handle.filter, count, keys, results);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 }
-
 
 }  // namespace gpu_filter_gqf_tcf

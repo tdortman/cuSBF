@@ -212,7 +212,6 @@ static void prepareFastxData() {
     g_data = std::move(data);
 }
 
-
 static uint64_t requestedFilterBitsForState(const bm::State& state) {
     if (benchmark_common::g_fastxFilterBitsOverride != 0) {
         return benchmark_common::g_fastxFilterBitsOverride;
@@ -389,8 +388,8 @@ class TcfFprFastxFixture : public bm::Fixture {
         d_scratchKeys.resize(g_data->insert_kmers);
 
         const uint64_t reservedGpuBytes = filterMemory + g_data->d_insert.size() +
-                                            g_data->d_insert_packed.size() * sizeof(uint64_t) +
-                                            d_scratchKeys.size() * sizeof(uint64_t);
+                                          g_data->d_insert_packed.size() * sizeof(uint64_t) +
+                                          d_scratchKeys.size() * sizeof(uint64_t);
         benchmark_common::resolveFastxChunkKmers(
             g_data->insert_kmers, reservedGpuBytes, benchmark_common::kTcfFastxChunkBytesPerKmer
         );
@@ -590,11 +589,10 @@ void runCucoFprFastxBenchmark(CucoBloomFprFastxFixture& fixture, bm::State& stat
 void runGqfFprFastxBenchmark(GqfFprFastxFixture& fixture, bm::State& state) {
     if (!gqf_tcf::gqfSupportsItemsForFilterBits(fixture.actualFilterBits, g_data->insert_kmers)) {
         const std::string error =
-            "GQF FPR benchmark requires at least "
-            + std::to_string(gqf_tcf::gqfMinFilterBitsForItems(g_data->insert_kmers))
-            + " filter bits for " + std::to_string(g_data->insert_kmers)
-            + " insert kmers at 0.95 load; got "
-            + std::to_string(fixture.actualFilterBits);
+            "GQF FPR benchmark requires at least " +
+            std::to_string(gqf_tcf::gqfMinFilterBitsForItems(g_data->insert_kmers)) +
+            " filter bits for " + std::to_string(g_data->insert_kmers) +
+            " insert kmers at 0.95 load; got " + std::to_string(fixture.actualFilterBits);
         state.SkipWithError(error);
         return;
     }
@@ -648,11 +646,10 @@ void runGqfFprFastxBenchmark(GqfFprFastxFixture& fixture, bm::State& state) {
 void runTcfFprFastxBenchmark(TcfFprFastxFixture& fixture, bm::State& state) {
     if (!gqf_tcf::tcfSupportsItemsForFilterBits(fixture.actualFilterBits, g_data->insert_kmers)) {
         const std::string error =
-            "TCF FPR benchmark requires at least "
-            + std::to_string(gqf_tcf::tcfMinFilterBitsForItems(g_data->insert_kmers))
-            + " filter bits for " + std::to_string(g_data->insert_kmers)
-            + " insert kmers at 0.95 load; got "
-            + std::to_string(fixture.actualFilterBits);
+            "TCF FPR benchmark requires at least " +
+            std::to_string(gqf_tcf::tcfMinFilterBitsForItems(g_data->insert_kmers)) +
+            " filter bits for " + std::to_string(g_data->insert_kmers) +
+            " insert kmers at 0.95 load; got " + std::to_string(fixture.actualFilterBits);
         state.SkipWithError(error);
         return;
     }

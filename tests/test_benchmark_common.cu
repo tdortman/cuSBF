@@ -5,7 +5,7 @@
 namespace {
 
 class FastxThroughputConfigTest : public ::testing::Test {
-  protected:
+   protected:
     void TearDown() override {
         benchmark_common::clearFastxInsertWorkload();
     }

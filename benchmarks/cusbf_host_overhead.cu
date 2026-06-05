@@ -161,7 +161,9 @@ BENCHMARK_DEFINE_F(CuSbfHostFixture, Query)(bm::State& state) {
 
 BENCHMARK_DEFINE_F(CuSbfDeviceFixture, Insert)(bm::State& state) {
     auto& fix = *static_cast<CuSbfDeviceFixture*>(this);
-    const cusbf::device_span<const char> insertSpan{benchDeviceSequencePtr(), benchSequenceLength()};
+    const cusbf::device_span<const char> insertSpan{
+        benchDeviceSequencePtr(), benchSequenceLength()
+    };
 
     for (auto _ : state) {
         CUSBF_UNWRAP(fix.filter->clear());
@@ -175,7 +177,9 @@ BENCHMARK_DEFINE_F(CuSbfDeviceFixture, Insert)(bm::State& state) {
 
 BENCHMARK_DEFINE_F(CuSbfDeviceFixture, Query)(bm::State& state) {
     auto& fix = *static_cast<CuSbfDeviceFixture*>(this);
-    const cusbf::device_span<const char> insertSpan{benchDeviceSequencePtr(), benchSequenceLength()};
+    const cusbf::device_span<const char> insertSpan{
+        benchDeviceSequencePtr(), benchSequenceLength()
+    };
 
     CUSBF_UNWRAP(fix.filter->clear());
     benchmark::DoNotOptimize(fix.filter->insert_sequence_async(insertSpan));
