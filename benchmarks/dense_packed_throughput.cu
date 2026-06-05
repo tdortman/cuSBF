@@ -278,6 +278,10 @@ BENCHMARK_DEFINE_F(DensePackedHostThroughputFixture, ByteQuery)(bm::State& state
     }
 
     const std::string_view sequence{fix.inputs_.h_sequence.data(), fix.inputs_.num_symbols};
+    const cusbf::device_span<uint8_t> output_span{
+        thrust::raw_pointer_cast(fix.inputs_.query_output.data()),
+        fix.inputs_.query_output.size(),
+    };
 
     const auto insertKmers = fix.inputs_.filter->insert_sequence(sequence);
     if (!insertKmers) {
@@ -288,14 +292,9 @@ BENCHMARK_DEFINE_F(DensePackedHostThroughputFixture, ByteQuery)(bm::State& state
 
     for (auto _ : state) {
         fix.timer.start();
-        const auto queryResults = fix.inputs_.filter->contains_sequence(sequence);
-        if (!queryResults) {
-            state.SkipWithError(queryResults.error().message());
-            return;
-        }
+        cusbf::require_void(fix.inputs_.filter->contains_sequence(sequence, output_span));
         state.SetIterationTime(fix.timer.elapsed());
-        benchmark::DoNotOptimize(queryResults->data());
-        benchmark::DoNotOptimize(queryResults->size());
+        benchmark::DoNotOptimize(thrust::raw_pointer_cast(fix.inputs_.query_output.data()));
     }
     setThroughputCounters(state, fix.inputs_);
 }
@@ -308,6 +307,10 @@ BENCHMARK_DEFINE_F(DensePackedHostThroughputFixture, DenseQuery)(bm::State& stat
     }
 
     const std::span<const uint64_t> query_words{fix.inputs_.h_dense_words};
+    const cusbf::device_span<uint8_t> output_span{
+        thrust::raw_pointer_cast(fix.inputs_.query_output.data()),
+        fix.inputs_.query_output.size(),
+    };
 
     const auto insertKmers =
         fix.inputs_.filter->insert_dense_packed(query_words, fix.inputs_.num_symbols);
@@ -319,15 +322,11 @@ BENCHMARK_DEFINE_F(DensePackedHostThroughputFixture, DenseQuery)(bm::State& stat
 
     for (auto _ : state) {
         fix.timer.start();
-        const auto queryResults =
-            fix.inputs_.filter->contains_dense_packed(query_words, fix.inputs_.num_symbols);
-        if (!queryResults) {
-            state.SkipWithError(queryResults.error().message());
-            return;
-        }
+        cusbf::require_void(
+            fix.inputs_.filter->contains_dense_packed(query_words, fix.inputs_.num_symbols, output_span)
+        );
         state.SetIterationTime(fix.timer.elapsed());
-        benchmark::DoNotOptimize(queryResults->data());
-        benchmark::DoNotOptimize(queryResults->size());
+        benchmark::DoNotOptimize(thrust::raw_pointer_cast(fix.inputs_.query_output.data()));
     }
     setThroughputCounters(state, fix.inputs_);
 }
