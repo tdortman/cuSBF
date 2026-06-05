@@ -18,6 +18,10 @@ benchmarks = {
         'src': 'cusbf_host_overhead.cu',
         'deps': [],
     },
+    'dense-packed-throughput': {
+        'src': 'dense_packed_throughput.cu',
+        'deps': [],
+    },
     'filter-comparison': {
         'src': 'filter_comparison.cu',
         'deps': [cuco_dep, cuckoogpu_dep, superbloom_cpu_dep, gqf_dep, tcf_dep],
