@@ -124,4 +124,35 @@ __device__ __forceinline__ bool prepare_sequence_hash_tiles(
     return __syncthreads_count(local_invalid_base) == 0;
 }
 
+/// @brief Builds the per-thread validity bitmask for strided query kernels.
+template <uint32_t k_stride, typename Config>
+__device__ __forceinline__ uint32_t build_stride_kmer_valid_mask(
+    uint64_t thread_offset,
+    uint64_t block_kmers,
+    bool block_all_valid,
+    const uint8_t* sequence_tile
+) {
+    uint32_t kmer_valid_mask = 0;
+    _Pragma("unroll")
+    for (uint32_t s = 0; s < k_stride; ++s) {
+        if ((thread_offset + s) < block_kmers) {
+            kmer_valid_mask |= (1u << s);
+        }
+    }
+
+    if (!block_all_valid) {
+        _Pragma("unroll")
+        for (uint32_t s = 0; s < k_stride; ++s) {
+            if (!(kmer_valid_mask & (1u << s))) {
+                continue;
+            }
+            const uint64_t local_idx = thread_offset + s;
+            if (!kmer_is_valid<Config>(sequence_tile, local_idx)) {
+                kmer_valid_mask &= ~(1u << s);
+            }
+        }
+    }
+    return kmer_valid_mask;
+}
+
 }  // namespace cusbf::detail
