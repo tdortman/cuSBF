@@ -4,7 +4,6 @@
 #include <cuda_runtime.h>
 
 #include <cuda/std/bit>
-#include <cuda/std/span>
 #include <cuda/stream>
 
 #include <thrust/copy.h>
@@ -20,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -200,7 +200,7 @@ class filter {
      * @return Number of k-mers attempted.
      */
     [[nodiscard]] Result<uint64_t> insert_dense_packed_async(
-        cuda::std::span<const uint64_t> d_words,
+        device_span<const uint64_t> d_words,
         uint64_t num_symbols,
         cuda::stream_ref stream = cudaStream_t{}
     ) {
@@ -209,9 +209,7 @@ class filter {
             return 0;
         }
 
-        CUSBF_TRY(launch_insert_dense_packed(
-            device_span<const uint64_t>{d_words.data(), d_words.size()}, num_symbols, stream
-        ));
+        CUSBF_TRY(launch_insert_dense_packed(d_words, num_symbols, stream));
         return totalKmers;
     }
 
@@ -221,7 +219,7 @@ class filter {
      * Copies @p d_words to device staging, launches the insert kernel, and synchronises.
      */
     [[nodiscard]] Result<uint64_t> insert_dense_packed(
-        cuda::std::span<const uint64_t> d_words,
+        std::span<const uint64_t> words,
         uint64_t num_symbols,
         cuda::stream_ref stream = cudaStream_t{}
     ) {
@@ -230,7 +228,7 @@ class filter {
             return 0;
         }
 
-        const auto staged = CUSBF_TRY(staged_dense_packed_view(d_words, stream));
+        const auto staged = CUSBF_TRY(staged_dense_packed_view(words, stream));
         CUSBF_TRY(launch_insert_dense_packed(staged, num_symbols, stream));
         CUSBF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
         return totalKmers;
@@ -243,7 +241,7 @@ class filter {
      * synchronise the stream.
      */
     [[nodiscard]] Result<void> contains_dense_packed_async(
-        cuda::std::span<const uint64_t> d_words,
+        device_span<const uint64_t> d_words,
         uint64_t num_symbols,
         device_span<uint8_t> d_output,
         cuda::stream_ref stream = cudaStream_t{}
@@ -252,12 +250,7 @@ class filter {
             return {};
         }
 
-        return launch_contains_dense_packed(
-            device_span<const uint64_t>{d_words.data(), d_words.size()},
-            num_symbols,
-            d_output,
-            stream
-        );
+        return launch_contains_dense_packed(d_words, num_symbols, d_output, stream);
     }
 
     /**
@@ -266,7 +259,7 @@ class filter {
      * Copies @p d_words to device, queries, copies results back, and synchronises.
      */
     [[nodiscard]] Result<std::vector<uint8_t>> contains_dense_packed(
-        cuda::std::span<const uint64_t> d_words,
+        std::span<const uint64_t> words,
         uint64_t num_symbols,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
@@ -276,7 +269,7 @@ class filter {
         }
 
         std::vector<uint8_t> output(numKmers);
-        const auto staged = CUSBF_TRY(staged_dense_packed_view(d_words, stream));
+        const auto staged = CUSBF_TRY(staged_dense_packed_view(words, stream));
         ensure_result_capacity(output.size());
         CUSBF_TRY(launch_contains_dense_packed(
             staged,
@@ -967,7 +960,7 @@ class filter {
                         record.size,
                         record.valid_kmers,
                         0,
-                        cuda::std::span<const uint8_t>{},
+                        std::span<const uint8_t>{},
                     }
                 );
                 continue;
@@ -975,8 +968,7 @@ class filter {
 
             const auto* hit_begin =
                 result_hits_scratch_.data() + static_cast<ptrdiff_t>(record.output_offset);
-            const auto hit_span =
-                cuda::std::span<const uint8_t>{hit_begin, static_cast<size_t>(kmers)};
+            const auto hit_span = std::span<const uint8_t>{hit_begin, static_cast<size_t>(kmers)};
             const uint64_t positive_kmers =
                 record_positive_kmers_scratch_[static_cast<size_t>(record.record_index)];
             report.positive_kmers += positive_kmers;
@@ -1537,8 +1529,7 @@ class filter {
      * @param sequence Source span (host memory).
      * @param stream   CUDA stream.
      */
-    Result<void>
-    stage_sequence(cuda::std::span<const char> sequence, cuda::stream_ref stream) const {
+    Result<void> stage_sequence(std::span<const char> sequence, cuda::stream_ref stream) const {
         ensure_sequence_capacity(sequence.size());
         CUSBF_CUDA_TRY(cudaMemcpyAsync(
             thrust::raw_pointer_cast(d_sequence_.data()),
@@ -1562,7 +1553,7 @@ class filter {
     }
 
     Result<void>
-    stage_dense_packed(cuda::std::span<const uint64_t> words, cuda::stream_ref stream) const {
+    stage_dense_packed(std::span<const uint64_t> words, cuda::stream_ref stream) const {
         ensure_dense_packed_capacity(words.size());
         CUSBF_CUDA_TRY(cudaMemcpyAsync(
             thrust::raw_pointer_cast(d_dense_packed_words_.data()),
@@ -1575,7 +1566,7 @@ class filter {
     }
 
     [[nodiscard]] Result<device_span<const uint64_t>>
-    staged_dense_packed_view(cuda::std::span<const uint64_t> words, cuda::stream_ref stream) const {
+    staged_dense_packed_view(std::span<const uint64_t> words, cuda::stream_ref stream) const {
         CUSBF_TRY(stage_dense_packed(words, stream));
         return device_span<const uint64_t>{
             thrust::raw_pointer_cast(d_dense_packed_words_.data()), words.size()
@@ -1644,7 +1635,7 @@ class filter {
      * Grows @c d_sequence_ or ping-pong buffers as needed.
      */
     [[nodiscard]] Result<device_span<const char>>
-    staged_sequence_view(cuda::std::span<const char> sequence, cuda::stream_ref stream) const {
+    staged_sequence_view(std::span<const char> sequence, cuda::stream_ref stream) const {
         CUSBF_TRY(stage_sequence(sequence, stream));
         return device_span<const char>{
             thrust::raw_pointer_cast(d_sequence_.data()), sequence.size()

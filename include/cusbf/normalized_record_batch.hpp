@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cuda/std/span>
+#include <span>
 
 #include <cstdint>
 #include <cstring>
@@ -43,8 +43,8 @@ class NormalizedRecordBatch {
     }
 
     /// @brief Per-record metadata in source order.
-    [[nodiscard]] cuda::std::span<const NormalizedRecord> records() const noexcept {
-        return cuda::std::span<const NormalizedRecord>{records_.data(), records_.size()};
+    [[nodiscard]] std::span<const NormalizedRecord> records() const noexcept {
+        return std::span<const NormalizedRecord>{records_.data(), records_.size()};
     }
 
     /// @brief Sum of @ref NormalizedRecord::valid_kmers across all records.

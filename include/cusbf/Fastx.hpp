@@ -8,13 +8,12 @@
 #include <fstream>
 #include <istream>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
-
-#include <cuda/std/span>
 
 #include <cusbf/error.hpp>
 #include <cusbf/gzstreambuf.hpp>
@@ -34,7 +33,7 @@ struct RecordBatchView {
     /// Raw record payloads concatenated.
     std::string_view sequence{};
     /// Ordered, non-overlapping record ranges.
-    cuda::std::span<const RecordRange> records{};
+    std::span<const RecordRange> records{};
 };
 
 /**
@@ -61,7 +60,7 @@ class DenseRecordBatchBuilder {
     [[nodiscard]] RecordBatchView view() const noexcept {
         return RecordBatchView{
             sequence_view(),
-            cuda::std::span<const RecordRange>{ranges_.data(), ranges_.size()},
+            std::span<const RecordRange>{ranges_.data(), ranges_.size()},
         };
     }
 
@@ -144,7 +143,7 @@ struct RecordQueryView {
     /// K-mers reported present in the filter.
     uint64_t positive_kmers{};
     /// Per-k-mer hits (1 = present), valid only in callback.
-    cuda::std::span<const uint8_t> hits{};
+    std::span<const uint8_t> hits{};
 };
 
 /// @brief Summary statistics returned by Filter insert operations on FASTX and record-batch input.
@@ -184,7 +183,7 @@ struct FastxRecordView {
     /// K-mers reported present.
     uint64_t positive_kmers{};
     /// Per-k-mer hits (1 = present), valid only for the callback duration.
-    cuda::std::span<const uint8_t> hits{};
+    std::span<const uint8_t> hits{};
 };
 
 /// @brief Detailed per-record query results returned by Filter FASTX detail APIs.
