@@ -1,11 +1,15 @@
 #pragma once
 
+#include <cuda/__cmath/ceil_div.h>
+#include <cuda_runtime.h>
+
 #include <cstdint>
 #include <string_view>
 #include <vector>
 
 #include <cusbf/config.cuh>
 #include <cusbf/detail/dense_packed.cuh>
+#include <cusbf/helpers.cuh>
 
 namespace cusbf {
 
@@ -42,6 +46,30 @@ template <typename Config>
         words[word_index] |= (static_cast<uint64_t>(symbol & Config::symbolMask) << bit_offset);
     }
     return words;
+}
+
+/**
+ * @brief Packs a device-resident encoded byte sequence into dense @c uint64_t words.
+ *
+ * @p d_sequence holds @p num_symbols symbols at @ref Config::symbolWidth bytes each.
+ * @p d_words must hold at least @ref dense_packed_word_count(num_symbols) words.
+ */
+template <typename Config>
+inline void pack_dense_sequence_device(
+    const char* d_sequence,
+    uint64_t num_symbols,
+    uint64_t* d_words,
+    cudaStream_t stream = {}
+) {
+    if (num_symbols == 0) {
+        return;
+    }
+    constexpr uint64_t block_size = 256;
+    const uint64_t num_words = dense_packed_word_count<Config>(num_symbols);
+    const uint64_t grid_size = cuda::ceil_div(num_words, block_size);
+    detail::pack_dense_sequence_kernel<Config>
+        <<<grid_size, block_size, 0, stream>>>(d_sequence, num_symbols, d_words);
+    CUSBF_CUDA_CALL(cudaGetLastError());
 }
 
 }  // namespace cusbf
