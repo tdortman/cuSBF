@@ -355,6 +355,42 @@ class filter {
     }
 
     /**
+     * @brief Async insert of k-mers from a device-resident record batch.
+     *
+     * The device sequence is assumed to already contain alphabet separator bytes
+     * between records, the caller is responsible for embedding them so that
+     * cross-record k-mers are not formed. @p records provides ordered,
+     * non-overlapping byte ranges into @p d_sequence.
+     *
+     * The returned count is total attempted k-mers (maximum possible per record
+     * size). The kernel still skips k-mer windows that contain invalid symbols.
+     *
+     * Does **not** synchronise the stream.
+     *
+     * @param d_sequence  Device-resident sequence (records concatenated with
+     *                    separators already in place).
+     * @param records     Ordered, non-overlapping record byte ranges.
+     * @param stream      CUDA stream to use.
+     * @return Total attempted k-mers across all records (0 if none).
+     */
+    [[nodiscard]] Result<uint64_t> insert_record_batch_async(
+        device_span<const char> d_sequence,
+        std::span<const RecordRange> records,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) {
+        CUSBF_TRY(validate_device_record_batch(d_sequence, records));
+        uint64_t totalKmers = 0;
+        for (const RecordRange& record : records) {
+            totalKmers += record_kmer_count(record.sequenceBytes);
+        }
+        if (totalKmers == 0) {
+            return 0;
+        }
+        CUSBF_TRY(launch_insert_sequence(d_sequence, stream));
+        return totalKmers;
+    }
+
+    /**
      * @brief Inserts all k-mers from a FASTA/FASTQ input stream.
      *
      * Reads records in streaming fashion, accumulating them until the
@@ -530,6 +566,43 @@ class filter {
         return query_normalized_record_batch_with_hits(
             batch.sequence, std::forward<Consumer>(consume), stream
         );
+    }
+
+    /**
+     * @brief Async query of k-mers from a device-resident record batch.
+     *
+     * The device sequence is assumed to already contain alphabet separator bytes
+     * between records: the caller is responsible for embedding them. @p records
+     * provides ordered, non-overlapping byte ranges into @p d_sequence.
+     *
+     * @p d_output receives one byte per k-mer across all records (1 = present,
+     * 0 = absent). The buffer must hold at least the total k-mer count.
+     *
+     * Does **not** synchronise the stream.
+     *
+     * @param d_sequence  Device-resident sequence (records concatenated with
+     *                    separators already in place).
+     * @param records     Ordered, non-overlapping record byte ranges.
+     * @param d_output    Per-k-mer result buffer.
+     * @param stream      CUDA stream to use.
+     */
+    [[nodiscard]] Result<void> contains_record_batch_async(
+        device_span<const char> d_sequence,
+        std::span<const RecordRange> records,
+        device_span<uint8_t> d_output,
+        cuda::stream_ref stream = cudaStream_t{}
+    ) const {
+        CUSBF_TRY(validate_device_record_batch(d_sequence, records));
+        const uint64_t totalKmers = sequence_kmer_count(d_sequence);
+        if (totalKmers == 0) {
+            return {};
+        }
+        if (d_output.size() < totalKmers) {
+            return Err(Error::invalid_argument(
+                "record batch query output span is too small"
+            ));
+        }
+        return launch_contains_sequence(d_sequence, d_output, stream);
     }
 
     /**
@@ -789,6 +862,43 @@ class filter {
         release_fastx_host_pings();
         release_fastx_host_scratch();
         release_fastx_device_staging();
+    }
+
+    /**
+     * @brief Validates record byte ranges against a device-resident sequence.
+     *
+     * Checks: ranges are ordered and non-overlapping, each range fits within
+     * @p d_sequence, and each range is symbol-aligned.
+     */
+    [[nodiscard]] static Result<void> validate_device_record_batch(
+        device_span<const char> d_sequence, std::span<const RecordRange> records
+    ) {
+        uint64_t next_offset = 0;
+        for (const RecordRange& record : records) {
+            if (record.sequenceOffset < next_offset) {
+                return Err(
+                    Error::invalid_argument(
+                        "record batch ranges must be ordered and non-overlapping"
+                    )
+                );
+            }
+            if (record.sequenceOffset > d_sequence.size() ||
+                record.sequenceBytes > d_sequence.size() - record.sequenceOffset) {
+                return Err(
+                    Error::invalid_argument("record batch range exceeds device sequence")
+                );
+            }
+            if (record.sequenceOffset % Config::symbolWidth != 0 ||
+                record.sequenceBytes % Config::symbolWidth != 0) {
+                return Err(
+                    Error::invalid_argument(
+                        "record batch ranges must align to the configured alphabet symbol width"
+                    )
+                );
+            }
+            next_offset = record.sequenceOffset + record.sequenceBytes;
+        }
+        return {};
     }
 
     static Result<void> normalize_record_batch_into_pinned(

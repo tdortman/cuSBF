@@ -1,5 +1,6 @@
 #include <thrust/device_vector.h>
 #include <string>
+#include <array>
 
 #include <cusbf/dense_packed.hpp>
 #include <cusbf/device_span.cuh>
@@ -335,4 +336,91 @@ TEST_F(BloomFilterTest, DnaTripletAlphabetIgnoresTrailingIncompleteTriplet) {
     EXPECT_EQ(inserted, 5u);
     EXPECT_EQ(hits.size(), 5u);
     EXPECT_TRUE(allOnes(hits));
+}
+
+TEST_F(BloomFilterTest, DeviceRecordBatchInsertMatchesHostSequencePath) {
+    cusbf::filter<TestConfig> filter(1 << 14);
+
+    const std::string record1 = "ACGTACGTACGT";
+    const std::string record2 = "TTGGAACCTTGG";
+    const char separator = static_cast<char>(TestConfig::Alphabet::separator);
+    const std::string device_sequence = record1 + separator + record2;
+
+    thrust::device_vector<char> d_seq(device_sequence.begin(), device_sequence.end());
+    const cusbf::device_span<const char> d_span{
+        thrust::raw_pointer_cast(d_seq.data()), d_seq.size()
+    };
+
+    const std::array<cusbf::RecordRange, 2> ranges{{
+        {0, static_cast<uint64_t>(record1.size())},
+        {static_cast<uint64_t>(record1.size() + 1), static_cast<uint64_t>(record2.size())}
+    }};
+
+    const uint64_t inserted = CUSBF_UNWRAP(
+        filter.insert_record_batch_async(d_span, ranges)
+    );
+    // 12 bases each = 12 symbols, k=5 → 8 kmers each → 16 total
+    ASSERT_EQ(inserted, 16);
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+
+    const auto hits1 = CUSBF_UNWRAP(filter.contains_sequence(record1));
+    ASSERT_EQ(hits1.size(), 8);
+    EXPECT_TRUE(allOnes(hits1));
+
+    const auto hits2 = CUSBF_UNWRAP(filter.contains_sequence(record2));
+    ASSERT_EQ(hits2.size(), 8);
+    EXPECT_TRUE(allOnes(hits2));
+}
+
+TEST_F(BloomFilterTest, DeviceRecordBatchQueryMatchesHostContains) {
+    cusbf::filter<TestConfig> filter(1 << 14);
+
+    const std::string record1 = "ACGTACGTACGT";
+    const std::string record2 = "TTGGAACCTTGG";
+    CUSBF_UNWRAP(filter.insert_sequence(record1));
+    CUSBF_UNWRAP(filter.insert_sequence(record2));
+
+    const char separator = static_cast<char>(TestConfig::Alphabet::separator);
+    const std::string query_seq = record1 + separator + record2;
+
+    thrust::device_vector<char> d_seq(query_seq.begin(), query_seq.end());
+    const cusbf::device_span<const char> d_span{
+        thrust::raw_pointer_cast(d_seq.data()), d_seq.size()
+    };
+
+    const std::array<cusbf::RecordRange, 2> ranges{{
+        {0, static_cast<uint64_t>(record1.size())},
+        {static_cast<uint64_t>(record1.size() + 1), static_cast<uint64_t>(record2.size())}
+    }};
+
+    // Full span: 25 bytes → 21 k-mer windows (k=5). Separator spans 5 windows.
+    const uint64_t totalKmers = 21;
+    thrust::device_vector<uint8_t> d_output(totalKmers);
+
+    cusbf::require_void(filter.contains_record_batch_async(
+        d_span, ranges,
+        cusbf::device_span<uint8_t>{
+            thrust::raw_pointer_cast(d_output.data()), d_output.size()
+        }
+    ));
+    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+
+    std::vector<uint8_t> hits(totalKmers);
+    CUSBF_CUDA_CALL(cudaMemcpy(
+        hits.data(), thrust::raw_pointer_cast(d_output.data()),
+        hits.size(), cudaMemcpyDeviceToHost
+    ));
+
+    // First 8 k-mers from record1: all present.
+    for (size_t i = 0; i < 8; ++i) {
+        EXPECT_EQ(hits[i], 1) << "record 1 k-mer " << i;
+    }
+    // Middle 5 k-mers span the 'N' separator: all absent (invalid symbol).
+    for (size_t i = 8; i < 13; ++i) {
+        EXPECT_EQ(hits[i], 0) << "separator k-mer " << i;
+    }
+    // Last 8 k-mers from record2: all present.
+    for (size_t i = 13; i < 21; ++i) {
+        EXPECT_EQ(hits[i], 1) << "record 2 k-mer " << i;
+    }
 }
