@@ -72,15 +72,18 @@ class CuSbfHostFixture : public bm::Fixture {
         numKmers = cfg.bench_kmers;
         filter = std::make_unique<cusbf::filter<CuSbfThroughputConfig>>(filter_bits);
         filterMemory = filter->filter_bits() / 8;
+        queryOutput.resize(numKmers);
     }
-
     void TearDown(const bm::State&) override {
         filter.reset();
+        queryOutput.clear();
+        queryOutput.shrink_to_fit();
     }
 
     uint64_t filter_bits = 0;
     uint64_t numKmers = 0;
     uint64_t filterMemory = 0;
+    thrust::device_vector<uint8_t> queryOutput;
     std::unique_ptr<cusbf::filter<CuSbfThroughputConfig>> filter;
     benchmark_common::CPUTimer timer;
 };
@@ -125,7 +128,7 @@ BENCHMARK_DEFINE_F(CuSbfHostFixture, Insert)(bm::State& state) {
         fix.timer.start();
         const auto kmersInserted = fix.filter->insert_sequence(sequence);
         if (!kmersInserted) {
-            state.SkipWithError(kmersInserted.error().message().c_str());
+            state.SkipWithError(kmersInserted.error().message());
             return;
         }
         state.SetIterationTime(fix.timer.elapsed());
@@ -137,24 +140,23 @@ BENCHMARK_DEFINE_F(CuSbfHostFixture, Insert)(bm::State& state) {
 BENCHMARK_DEFINE_F(CuSbfHostFixture, Query)(bm::State& state) {
     auto& fix = *static_cast<CuSbfHostFixture*>(this);
     const std::string_view sequence = benchHostSequenceView();
+    const cusbf::device_span<uint8_t> output_span{
+        thrust::raw_pointer_cast(fix.queryOutput.data()),
+        fix.numKmers,
+    };
 
     const auto insertKmers = fix.filter->insert_sequence(sequence);
     if (!insertKmers) {
-        state.SkipWithError(insertKmers.error().message().c_str());
+        state.SkipWithError(insertKmers.error().message());
         return;
     }
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     for (auto _ : state) {
         fix.timer.start();
-        const auto queryResults = fix.filter->contains_sequence(sequence);
-        if (!queryResults) {
-            state.SkipWithError(queryResults.error().message().c_str());
-            return;
-        }
+        cusbf::require_void(fix.filter->contains_sequence(sequence, output_span));
         state.SetIterationTime(fix.timer.elapsed());
-        benchmark::DoNotOptimize(queryResults->data());
-        benchmark::DoNotOptimize(queryResults->size());
+        benchmark::DoNotOptimize(thrust::raw_pointer_cast(fix.queryOutput.data()));
     }
     setThroughputCounters(state, fix.filter_bits, fix.filterMemory, fix.numKmers, 0.0);
 }
