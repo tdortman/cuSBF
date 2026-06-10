@@ -7,6 +7,7 @@ multiple plotting scripts to reduce code duplication and ensure visual consisten
 import math
 import re
 import sys
+import io
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +15,27 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import typer
+import matplotlib as mpl
+
+mpl.rcParams.update(
+    {
+        "text.usetex": True,
+        "font.family": "serif",
+        "pdf.use14corefonts": True,
+        "ps.useafm": True,
+    }
+)
+
+
+def paper_text(text: str, *, bold: bool = False) -> str:
+    """Format plain text labels for LaTeX-backed figure output."""
+    escaped = (
+        text.replace("\\", r"\textbackslash{}").replace("%", r"\%").replace("_", r"\_")
+    )
+    if bold:
+        return rf"\textbf{{{escaped}}}"
+    return escaped
+
 
 FILTER_STYLES = {
     "cusbf": {"color": "#2E86AB", "marker": "o"},
@@ -207,11 +229,11 @@ def format_axis(
         ylim: Optional (min, max) tuple for y-axis limits
         grid: Whether to show grid lines
     """
-    ax.set_xlabel(xlabel, fontsize=AXIS_LABEL_FONT_SIZE, fontweight="bold")
-    ax.set_ylabel(ylabel, fontsize=AXIS_LABEL_FONT_SIZE, fontweight="bold")
+    ax.set_xlabel(paper_text(xlabel, bold=True), fontsize=AXIS_LABEL_FONT_SIZE)
+    ax.set_ylabel(paper_text(ylabel, bold=True), fontsize=AXIS_LABEL_FONT_SIZE)
 
     if title:
-        ax.set_title(title, fontsize=TITLE_FONT_SIZE, fontweight="bold")
+        ax.set_title(paper_text(title, bold=True), fontsize=TITLE_FONT_SIZE)
 
     if xscale == "log":
         ax.set_xscale("log", base=2)
@@ -248,10 +270,14 @@ def save_figure(
     """
     save_kwargs = {
         "bbox_inches": "tight",
+        "pad_inches": 0.03,
         "transparent": True,
         "format": "pdf",
         "dpi": 600,
     }
+
+    figure = plt.gcf() if fig_or_path is None else fig_or_path
+    figure.canvas.draw()
 
     if fig_or_path is None:
         plt.savefig(output_path, **save_kwargs)
@@ -319,7 +345,7 @@ def setup_figure(
         nrows, ncols, figsize=figsize, sharex=sharex, sharey=sharey
     )
     if title:
-        fig.suptitle(title, fontsize=TITLE_FONT_SIZE, fontweight="bold")
+        fig.suptitle(paper_text(title, bold=True), fontsize=TITLE_FONT_SIZE)
     return fig, axes
 
 
