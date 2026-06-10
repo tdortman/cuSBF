@@ -216,8 +216,12 @@ def plot_pareto_scatters(merged: pd.DataFrame, output_dir: Path) -> None:
                 zorder=5,
             )
 
-        ax.set_xlabel("FPR [%]", fontsize=PAPER_AXIS_LABEL_SIZE, fontweight="bold")
-        ax.set_ylabel(y_label, fontsize=PAPER_AXIS_LABEL_SIZE, fontweight="bold")
+        ax.set_xlabel(
+            pu.paper_text("FPR [%]", bold=True), fontsize=PAPER_AXIS_LABEL_SIZE
+        )
+        ax.set_ylabel(
+            pu.paper_text(y_label, bold=True), fontsize=PAPER_AXIS_LABEL_SIZE
+        )
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.tick_params(axis="both", labelsize=PAPER_TICK_LABEL_SIZE)
@@ -355,7 +359,9 @@ def plot_heatmap_summary(merged: pd.DataFrame, output_dir: Path) -> None:
             x_tick_labels = categorical_tick_labels(m_values_sorted)
             y_tick_label_size = scaled_tick_label_size(len(s_values_sorted))
 
-            ax.set_title(f"H={h_val}", fontsize=PAPER_TITLE_SIZE, fontweight="bold")
+            ax.set_title(
+                pu.paper_text(f"H={h_val}", bold=True), fontsize=PAPER_TITLE_SIZE
+            )
             ax.set_xticks(range(len(m_values_sorted)))
             ax.set_xticklabels(m_values_sorted)
             ax.set_xticklabels(
@@ -402,9 +408,9 @@ def plot_heatmap_summary(merged: pd.DataFrame, output_dir: Path) -> None:
                 )
 
             if col_idx == 0:
-                ax.set_ylabel("S", fontsize=PAPER_AXIS_LABEL_SIZE, fontweight="bold")
+                ax.set_ylabel(pu.paper_text("S", bold=True), fontsize=PAPER_AXIS_LABEL_SIZE)
             if row_idx == len(metric_configs) - 1:
-                ax.set_xlabel("M", fontsize=PAPER_AXIS_LABEL_SIZE, fontweight="bold")
+                ax.set_xlabel(pu.paper_text("M", bold=True), fontsize=PAPER_AXIS_LABEL_SIZE)
 
         row_images.append((row_image, metric_label))
 
@@ -416,21 +422,16 @@ def plot_heatmap_summary(merged: pd.DataFrame, output_dir: Path) -> None:
             pad=0.02,
         )
         colorbar.set_label(
-            metric_label, fontsize=PAPER_AXIS_LABEL_SIZE, fontweight="bold"
+            pu.paper_text(metric_label, bold=True), fontsize=PAPER_AXIS_LABEL_SIZE
         )
         colorbar.ax.tick_params(labelsize=PAPER_TICK_LABEL_SIZE)
 
     fig.legend(
         handles=[
-            Line2D(
-                [0],
-                [0],
-                marker="s",
-                color=PARETO_EDGE_COLOR,
-                markerfacecolor="none",
-                markeredgewidth=0.8,
-                linestyle="None",
-                markersize=7,
+            Patch(
+                facecolor="none",
+                edgecolor=PARETO_EDGE_COLOR,
+                linewidth=0.8,
                 label="Pareto config",
             )
         ],
