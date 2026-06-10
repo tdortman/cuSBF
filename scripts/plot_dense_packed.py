@@ -152,11 +152,10 @@ def _add_residency_label(fig: plt.Figure, ax: plt.Axes, residency: str) -> None:
     fig.text(
         legend_right_x,
         residency_y,
-        _RESIDENCY_LABELS[residency],
+        pu.paper_text(_RESIDENCY_LABELS[residency], bold=True),
         ha="right",
         va="bottom",
         fontsize=pu.LEGEND_FONT_SIZE - 2,
-        fontweight="bold",
     )
 
 
@@ -212,11 +211,10 @@ def _add_shared_x_label(fig: plt.Figure, ax: plt.Axes, label: str) -> None:
     fig.text(
         (left_x + right_x) / 2,
         bottom_y - 0.068,
-        label,
+        pu.paper_text(label, bold=True),
         ha="center",
         va="top",
         fontsize=pu.DEFAULT_FONT_SIZE - 1,
-        fontweight="bold",
     )
 
 
@@ -227,12 +225,11 @@ def _add_shared_y_label(fig: plt.Figure, ax: plt.Axes, label: str) -> None:
     fig.text(
         left_x - _YLABEL_LEFT_MARGIN,
         (bottom_y + top_y) / 2,
-        label,
+        pu.paper_text(label, bold=True),
         ha="center",
         va="center",
         rotation="vertical",
         fontsize=pu.DEFAULT_FONT_SIZE - 1,
-        fontweight="bold",
     )
 
 
@@ -283,12 +280,10 @@ def plot_throughput(data: pd.DataFrame, residency: str, output_pdf: Path) -> Non
     _add_shared_x_label(fig, ax, _X_AXIS_LABEL)
     _add_comparison_legend(fig, ax, encodings, operations, residency)
 
-    fig.savefig(
-        output_pdf, bbox_inches="tight", transparent=True, format="pdf", dpi=600
-    )
-    plt.close(fig)
-    typer.secho(
-        f"Dense-packed throughput figure saved to {output_pdf}", fg=typer.colors.GREEN
+    pu.save_figure(
+        fig,
+        output_pdf,
+        f"Dense-packed throughput figure saved to {output_pdf}",
     )
 
 
