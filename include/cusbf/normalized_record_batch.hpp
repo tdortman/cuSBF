@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cusbf/detail/record_math.cuh>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -74,17 +75,6 @@ class NormalizedRecordBatch {
 };
 
 namespace detail {
-
-template <typename Config>
-[[nodiscard]] static uint64_t record_symbol_count(uint64_t bases) {
-    return bases / Config::symbolWidth;
-}
-
-template <typename Config>
-[[nodiscard]] static uint64_t record_kmer_count(uint64_t bases) {
-    const uint64_t symbols = record_symbol_count<Config>(bases);
-    return symbols < Config::k ? 0 : symbols - Config::k + 1;
-}
 
 template <typename Config>
 [[nodiscard]] static bool sequence_may_have_invalid_symbols(std::string_view sequence) {

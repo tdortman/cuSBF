@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cusbf/detail/record_math.cuh>
 #include <filesystem>
 #include <format>
 #include <stdexcept>
@@ -60,13 +61,12 @@ struct cuda_free_memory {
 
 template <typename Config>
 [[nodiscard]] constexpr uint64_t fastx_record_symbol_count(uint64_t bases) noexcept {
-    return bases / Config::symbolWidth;
+    return record_symbol_count<Config>(bases);
 }
 
 template <typename Config>
 [[nodiscard]] constexpr uint64_t fastx_record_kmer_count(uint64_t bases) noexcept {
-    const uint64_t symbols = fastx_record_symbol_count<Config>(bases);
-    return symbols < Config::k ? 0 : symbols - Config::k + 1;
+    return record_kmer_count<Config>(bases);
 }
 
 /// @brief Upper bound on normalized sequence bytes for a raw host chunk.

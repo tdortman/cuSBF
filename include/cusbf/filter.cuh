@@ -12,6 +12,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
 #include <thrust/transform_reduce.h>
+#include <cusbf/detail/record_math.cuh>
 
 #include <algorithm>
 #include <array>
@@ -922,12 +923,11 @@ class filter {
     }
 
     [[nodiscard]] static uint64_t record_symbol_count(uint64_t bases) {
-        return bases / Config::symbolWidth;
+        return detail::record_symbol_count<Config>(bases);
     }
 
     [[nodiscard]] static uint64_t record_kmer_count(uint64_t bases) {
-        const uint64_t symbols = record_symbol_count(bases);
-        return symbols < Config::k ? 0 : symbols - Config::k + 1;
+        return detail::record_kmer_count<Config>(bases);
     }
 
     static void accumulate_insert_report(FastxInsertReport& total, const FastxInsertReport& chunk) {
