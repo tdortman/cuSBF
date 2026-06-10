@@ -217,12 +217,12 @@ def main(
         )
 
     ax.set_xlabel(
-        "Filter size [bits]", fontsize=pu.AXIS_LABEL_FONT_SIZE, fontweight="bold"
+        pu.paper_text("Filter size [bits]", bold=True),
+        fontsize=pu.AXIS_LABEL_FONT_SIZE,
     )
     ax.set_ylabel(
-        "False positives (hits / 1B random k-mers)",
+        pu.paper_text("False positives (hits / 1B random k-mers)", bold=True),
         fontsize=pu.AXIS_LABEL_FONT_SIZE,
-        fontweight="bold",
     )
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
@@ -245,18 +245,11 @@ def main(
     )
 
     output_file = output_dir / "fpr_fastx.pdf"
-    plt.savefig(
+    pu.save_figure(
+        fig,
         output_file,
-        bbox_inches="tight",
-        transparent=True,
-        format="pdf",
-        dpi=600,
-    )
-    typer.secho(
         f"FPR FASTX plot saved to {output_file.absolute()}",
-        fg=typer.colors.GREEN,
     )
-    plt.close()
 
 
 if __name__ == "__main__":
