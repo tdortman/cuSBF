@@ -724,3 +724,103 @@ TEST_F(BloomFilterTest, MalformedFastqThrowsOnQualityLengthMismatch) {
     EXPECT_EQ(site.line, 4u);
     EXPECT_EQ(site.column, 8u);
 }
+
+TEST_F(BloomFilterTest, CallbackAbortStopsProcessingPreservingFilterReuse) {
+    cusbf::filter<TestConfig> filter(1 << 12);
+
+    const std::string sequenceA = "ACGTACGTACGT";
+    const std::string sequenceB = "TGCATGCA";
+    const std::string sequenceC = "GGGAAAACCC";
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceA));
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceB));
+    (void)CUSBF_UNWRAP(filter.insert_sequence(sequenceC));
+
+    size_t callback_calls = 0;
+    std::vector<StreamedRecord> partial_records;
+    {
+        std::istringstream abort_input(
+            ">seqA\n"
+            "ACGTACGTACGT\n"
+            ">seqB\n"
+            "TGCATGCA\n"
+            ">seqC\n"
+            "GGGAAAACCC\n"
+        );
+        try {
+            CUSBF_UNWRAP(
+                filter.query_fastx_records(abort_input, [&](const cusbf::FastxRecordView& record) {
+                    ++callback_calls;
+                    partial_records.push_back(
+                        StreamedRecord{
+                            record.record_index,
+                            std::string(record.header),
+                            std::string(record.sequence),
+                            record.queriedBases,
+                            record.queriedKmers,
+                            record.positive_kmers,
+                            std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
+                        }
+                    );
+                    if (callback_calls == 1) {
+                        throw std::runtime_error("abort");
+                    }
+                })
+            );
+            FAIL() << "expected exception from callback";
+        } catch (const std::runtime_error& e) {
+            EXPECT_STREQ(e.what(), "abort");
+        }
+    }
+    EXPECT_EQ(callback_calls, 1u);
+    ASSERT_EQ(partial_records.size(), 1u);
+    EXPECT_EQ(partial_records[0].record_index, 0u);
+    EXPECT_EQ(partial_records[0].header, "seqA");
+    EXPECT_EQ(partial_records[0].sequence, sequenceA);
+
+    // Second query on the same filter should still succeed.
+    std::vector<StreamedRecord> records;
+    {
+        std::istringstream second_input(
+            ">seqA\n"
+            "ACGTACGTACGT\n"
+            ">seqB\n"
+            "TGCATGCA\n"
+            ">seqC\n"
+            "GGGAAAACCC\n"
+        );
+        const auto summary = CUSBF_UNWRAP(
+            filter.query_fastx_records(second_input, [&](const cusbf::FastxRecordView& record) {
+                records.push_back(
+                    StreamedRecord{
+                        record.record_index,
+                        std::string(record.header),
+                        std::string(record.sequence),
+                        record.queriedBases,
+                        record.queriedKmers,
+                        record.positive_kmers,
+                        std::vector<uint8_t>(record.hits.begin(), record.hits.end()),
+                    }
+                );
+            })
+        );
+
+        ASSERT_EQ(records.size(), 3u);
+        EXPECT_EQ(summary.recordsQueried, 3);
+        EXPECT_EQ(summary.queriedBases, sequenceA.size() + sequenceB.size() + sequenceC.size());
+
+        EXPECT_EQ(records[0].record_index, 0u);
+        EXPECT_EQ(records[0].header, "seqA");
+        EXPECT_EQ(records[0].sequence, sequenceA);
+        EXPECT_TRUE(allOnes(records[0].hits));
+
+        EXPECT_EQ(records[1].record_index, 1u);
+        EXPECT_EQ(records[1].header, "seqB");
+        EXPECT_EQ(records[1].sequence, sequenceB);
+        EXPECT_TRUE(allOnes(records[1].hits));
+
+        EXPECT_EQ(records[2].record_index, 2u);
+        EXPECT_EQ(records[2].header, "seqC");
+        EXPECT_EQ(records[2].sequence, sequenceC);
+        EXPECT_TRUE(allOnes(records[2].hits));
+    }
+}
