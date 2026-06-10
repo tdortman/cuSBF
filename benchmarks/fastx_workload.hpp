@@ -31,11 +31,12 @@ template <uint64_t K, typename Alphabet = cusbf::DnaAlphabet>
     return symbols < K ? 0 : symbols - K + 1;
 }
 
-[[nodiscard]] inline std::vector<char>
-read_fastx_concatenated(std::string_view path, char separator = cusbf::DnaAlphabet::separator) {
-    const std::filesystem::path file_path{path};
-    auto input = CUSBF_UNWRAP(cusbf::detail::openFastxFile(file_path));
-    cusbf::detail::FastxReader reader(*input, path);
+[[nodiscard]] inline std::vector<char> read_fastx_concatenated(
+    const std::filesystem::path& path,
+    char separator = cusbf::DnaAlphabet::separator
+) {
+    auto input = CUSBF_UNWRAP(cusbf::detail::openFastxFile(path));
+    cusbf::detail::FastxReader reader(*input, std::string_view{path.native()});
 
     std::vector<char> sequence;
     cusbf::detail::FastxRecord record;
@@ -133,10 +134,9 @@ inline void ensure_packed_kmers(PreparedFastxSequence<K, Alphabet>& sequence) {
     }
     sequence.packed_ready = true;
 }
-
 template <uint64_t K, typename Alphabet = cusbf::DnaAlphabet>
 [[nodiscard]] inline PreparedFastxSequence<K, Alphabet>
-load_fastx_sequence(std::string_view path, char separator = Alphabet::separator) {
+load_fastx_sequence(const std::filesystem::path& path, char separator = Alphabet::separator) {
     PreparedFastxSequence<K, Alphabet> sequence;
     sequence.host_sequence = read_fastx_concatenated(path, separator);
     sequence.kmers = sequence_kmer_count<K, Alphabet>(sequence.host_sequence.size());

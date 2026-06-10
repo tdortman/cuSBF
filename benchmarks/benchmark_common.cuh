@@ -285,8 +285,10 @@ class CPUTimer {
 // Concatenate all records in a FASTA/FASTQ file into a single sequence,
 // Shared FASTX reader helper. Prefer benchmark_common::fastx_workload::load_fastx_sequence()
 // when both host and device views are needed.
-inline std::vector<char>
-readFastxConcatenated(std::string_view path, char separator = cusbf::DnaAlphabet::separator) {
+inline std::vector<char> readFastxConcatenated(
+    const std::filesystem::path& path,
+    char separator = cusbf::DnaAlphabet::separator
+) {
     return fastx_workload::read_fastx_concatenated(path, separator);
 }
 

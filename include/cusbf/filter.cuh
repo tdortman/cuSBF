@@ -19,6 +19,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <span>
 #include <string>
@@ -434,7 +435,7 @@ class filter {
      * @return Report summarising records indexed, bases processed, and k-mers inserted.
      */
     [[nodiscard]] Result<FastxInsertReport> insert_fastx_file(
-        std::string_view path,
+        const std::filesystem::path& path,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
     ) {
@@ -443,7 +444,9 @@ class filter {
             detail::fastx_chunk_mode::insert,
             fill_fraction,
             [&](auto& reader, auto dispatch_path) {
-                return insert_fastx_reader(reader, path, fill_fraction, stream, dispatch_path);
+                return insert_fastx_reader(
+                    reader, std::string_view{path.native()}, fill_fraction, stream, dispatch_path
+                );
             }
         );
     }
@@ -647,7 +650,7 @@ class filter {
      * @see insert_fastx_file for dispatch and chunking behavior.
      */
     [[nodiscard]] Result<FastxQueryReport> query_fastx_file(
-        std::string_view path,
+        const std::filesystem::path& path,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
@@ -656,7 +659,9 @@ class filter {
             detail::fastx_chunk_mode::query,
             fill_fraction,
             [&](auto& reader, auto dispatch_path) {
-                return query_fastx_reader(reader, path, fill_fraction, stream, dispatch_path);
+                return query_fastx_reader(
+                    reader, std::string_view{path.native()}, fill_fraction, stream, dispatch_path
+                );
             }
         );
     }
@@ -705,7 +710,7 @@ class filter {
      */
     template <FastxRecordConsumer Consumer>
     [[nodiscard]] Result<FastxQueryReport> query_fastx_file_records(
-        std::string_view path,
+        const std::filesystem::path& path,
         Consumer&& consume,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
@@ -716,7 +721,12 @@ class filter {
             fill_fraction,
             [&](auto& reader, auto dispatch_path) {
                 return query_fastx_records_stream(
-                    reader, path, consume, fill_fraction, stream, dispatch_path
+                    reader,
+                    std::string_view{path.native()},
+                    consume,
+                    fill_fraction,
+                    stream,
+                    dispatch_path
                 );
             }
         );
@@ -759,7 +769,7 @@ class filter {
      * @see query_fastx_detailed
      */
     [[nodiscard]] Result<FastxDetailedQueryReport> query_fastx_file_detailed(
-        std::string_view path,
+        const std::filesystem::path& path,
         double fill_fraction = 0.7,
         cuda::stream_ref stream = cudaStream_t{}
     ) const {
@@ -769,7 +779,7 @@ class filter {
             fill_fraction,
             [&](auto& reader, auto dispatch_path) {
                 return query_fastx_detailed_stream(
-                    reader, path, fill_fraction, stream, dispatch_path
+                    reader, std::string_view{path.native()}, fill_fraction, stream, dispatch_path
                 );
             }
         );

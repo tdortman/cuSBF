@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <filesystem>
 #include <random>
 #include <sstream>
 #include <string>
@@ -75,8 +76,8 @@ template <typename Config>
     uint64_t filter_bits,
     std::string_view sequence,
     std::string_view query,
-    std::string_view insert_fastx_path,
-    std::string_view query_fastx_path,
+    const std::filesystem::path& insert_fastx_path,
+    const std::filesystem::path& query_fastx_path,
     bool useInsertFastx,
     bool useRawSequence,
     bool useGeneratedFastx,

@@ -1,6 +1,6 @@
 #include <thrust/device_vector.h>
-#include <string>
 #include <array>
+#include <string>
 
 #include <cusbf/dense_packed.hpp>
 #include <cusbf/device_span.cuh>
