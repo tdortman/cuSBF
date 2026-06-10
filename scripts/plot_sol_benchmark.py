@@ -126,11 +126,10 @@ def _add_shared_x_label(fig, axes, label: str) -> None:
     fig.text(
         (left_x + right_x) / 2,
         bottom_y - 0.068,
-        label,
+        pu.paper_text(label, bold=True),
         ha="center",
         va="top",
         fontsize=pu.DEFAULT_FONT_SIZE - 1,
-        fontweight="bold",
     )
 
 
@@ -142,12 +141,11 @@ def _add_shared_y_label(fig, axes, label: str) -> None:
     fig.text(
         left_x - 0.07,
         (bottom_y + top_y) / 2,
-        label,
+        pu.paper_text(label, bold=True),
         ha="center",
         va="center",
         rotation="vertical",
         fontsize=pu.DEFAULT_FONT_SIZE - 1,
-        fontweight="bold",
     )
 
 
@@ -201,7 +199,7 @@ def _plot_unified(df, output_dir: Path) -> None:
                     markersize=SOL_MARKER_SIZE,
                 )
 
-        ax.set_title(metric_name, fontweight="bold", pad=4)
+        ax.set_title(pu.paper_text(metric_name, bold=True), pad=4)
         ax.set_xscale("log", base=2)
         ax.set_ylim(0, 105)
         ax.set_yticks(Y_AXIS_TICKS)
@@ -216,11 +214,7 @@ def _plot_unified(df, output_dir: Path) -> None:
     _add_comparison_legend(fig, axes, filters, operations)
 
     output_file = output_dir / "sol_benchmark.pdf"
-    plt.savefig(
-        output_file, bbox_inches="tight", transparent=True, format="pdf", dpi=600
-    )
-    typer.secho(f"Saved {output_file}", fg=typer.colors.GREEN)
-    plt.close()
+    pu.save_figure(fig, output_file, f"Saved {output_file}")
 
 
 def _plot_per_metric_comparison(df, output_dir: Path) -> None:
@@ -256,14 +250,12 @@ def _plot_per_metric_comparison(df, output_dir: Path) -> None:
                 )
 
             ax.set_xlabel(
-                X_AXIS_LABEL,
+                pu.paper_text(X_AXIS_LABEL, bold=True),
                 fontsize=pu.AXIS_LABEL_FONT_SIZE,
-                fontweight="bold",
             )
             ax.set_ylabel(
-                f"{metric_name} Throughput (% of Peak)",
+                pu.paper_text(f"{metric_name} Throughput (% of Peak)", bold=True),
                 fontsize=pu.AXIS_LABEL_FONT_SIZE,
-                fontweight="bold",
             )
             ax.set_xscale("log", base=2)
             ax.set_ylim(0, 105)
@@ -280,15 +272,7 @@ def _plot_per_metric_comparison(df, output_dir: Path) -> None:
             plt.tight_layout(rect=(0, 0, 1, 0.92))
 
             output_file = output_dir / f"sol_compare_{metric_col}_{operation}.pdf"
-            plt.savefig(
-                output_file,
-                bbox_inches="tight",
-                transparent=True,
-                format="pdf",
-                dpi=600,
-            )
-            typer.secho(f"Saved {output_file}", fg=typer.colors.GREEN)
-            plt.close()
+            pu.save_figure(None, output_file, f"Saved {output_file}")
 
 
 @app.command()
