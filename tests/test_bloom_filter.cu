@@ -351,14 +351,12 @@ TEST_F(BloomFilterTest, DeviceRecordBatchInsertMatchesHostSequencePath) {
         thrust::raw_pointer_cast(d_seq.data()), d_seq.size()
     };
 
-    const std::array<cusbf::RecordRange, 2> ranges{{
-        {0, static_cast<uint64_t>(record1.size())},
-        {static_cast<uint64_t>(record1.size() + 1), static_cast<uint64_t>(record2.size())}
-    }};
+    const std::array<cusbf::RecordRange, 2> ranges{
+        {{0, static_cast<uint64_t>(record1.size())},
+         {static_cast<uint64_t>(record1.size() + 1), static_cast<uint64_t>(record2.size())}}
+    };
 
-    const uint64_t inserted = CUSBF_UNWRAP(
-        filter.insert_record_batch_async(d_span, ranges)
-    );
+    const uint64_t inserted = CUSBF_UNWRAP(filter.insert_record_batch_async(d_span, ranges));
     // 12 bases each = 12 symbols, k=5 → 8 kmers each → 16 total
     ASSERT_EQ(inserted, 16);
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
@@ -388,27 +386,25 @@ TEST_F(BloomFilterTest, DeviceRecordBatchQueryMatchesHostContains) {
         thrust::raw_pointer_cast(d_seq.data()), d_seq.size()
     };
 
-    const std::array<cusbf::RecordRange, 2> ranges{{
-        {0, static_cast<uint64_t>(record1.size())},
-        {static_cast<uint64_t>(record1.size() + 1), static_cast<uint64_t>(record2.size())}
-    }};
+    const std::array<cusbf::RecordRange, 2> ranges{
+        {{0, static_cast<uint64_t>(record1.size())},
+         {static_cast<uint64_t>(record1.size() + 1), static_cast<uint64_t>(record2.size())}}
+    };
 
     // Full span: 25 bytes → 21 k-mer windows (k=5). Separator spans 5 windows.
     const uint64_t totalKmers = 21;
     thrust::device_vector<uint8_t> d_output(totalKmers);
 
     cusbf::require_void(filter.contains_record_batch_async(
-        d_span, ranges,
-        cusbf::device_span<uint8_t>{
-            thrust::raw_pointer_cast(d_output.data()), d_output.size()
-        }
+        d_span,
+        ranges,
+        cusbf::device_span<uint8_t>{thrust::raw_pointer_cast(d_output.data()), d_output.size()}
     ));
     CUSBF_CUDA_CALL(cudaDeviceSynchronize());
 
     std::vector<uint8_t> hits(totalKmers);
     CUSBF_CUDA_CALL(cudaMemcpy(
-        hits.data(), thrust::raw_pointer_cast(d_output.data()),
-        hits.size(), cudaMemcpyDeviceToHost
+        hits.data(), thrust::raw_pointer_cast(d_output.data()), hits.size(), cudaMemcpyDeviceToHost
     ));
 
     // First 8 k-mers from record1: all present.
