@@ -97,9 +97,10 @@ def generate_plot(
 
         # ax.set_yscale("log")
         ax.set_ylabel(
-            f"{label} [{unit}]", fontsize=AXIS_LABEL_FONT_SIZE, fontweight="bold"
+            pu.paper_text(f"{label} [{unit}]", bold=True),
+            fontsize=AXIS_LABEL_FONT_SIZE,
         )
-        ax.set_title(label, fontsize=TITLE_FONT_SIZE, fontweight="bold")
+        ax.set_title(pu.paper_text(label, bold=True), fontsize=TITLE_FONT_SIZE)
         ax.grid(True, axis="y", ls="--", alpha=GRID_ALPHA)
 
     if config:
@@ -108,9 +109,8 @@ def generate_plot(
         config_str = ""
     suptitle = "cuSBF vs CPU SuperBloom" + (f" ({config_str})" if config_str else "")
     fig.suptitle(
-        suptitle,
+        pu.paper_text(suptitle, bold=True),
         fontsize=TITLE_FONT_SIZE + 2,
-        fontweight="bold",
         y=1.02,
     )
     fig.tight_layout()
