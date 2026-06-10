@@ -66,6 +66,7 @@ class DenseRecordBatchBuilder {
 
     /// @brief Appends one record payload and records its byte range.
     void appendRecord(std::string_view record_sequence) {
+        assert(external_sequence_.empty() && "cannot appendRecord when external_sequence_ is set");
         ranges_.push_back(
             RecordRange{
                 static_cast<uint64_t>(sequence_.size()),
@@ -290,9 +291,8 @@ inline void trimTrailingCarriageReturn(std::string& line) {
 /**
  * @brief Streaming FASTA/FASTQ parser.
  *
- * Reads one record at a time via @ref nextRecord. Supports both FASTA and
- * FASTQ formats, auto-detected from the first header character. Mixed
- * formats within a single stream are rejected with an exception.
+ * Reads one record at a time via @ref nextRecord. Errors reading the
+ * stream are returned as error results.
  */
 class FastxReader {
    public:
@@ -355,7 +355,7 @@ class FastxReader {
 
    private:
     std::istream& input_;
-    std::string_view source_name_;
+    std::string source_name_;
     std::string pendingHeader_;
     std::string lineBuffer_;
     FastxFormat format_{FastxFormat::unknown};
@@ -391,6 +391,7 @@ class FastxReader {
     }
 
     [[nodiscard]] Result<void> readFastaSequence(std::string& sequence) {
+        sequence.reserve(4096);
         while (std::getline(input_, lineBuffer_)) {
             ++lineNumber_;
             trimTrailingCarriageReturn(lineBuffer_);
@@ -410,6 +411,7 @@ class FastxReader {
     }
 
     [[nodiscard]] Result<void> readFastqSequence(std::string& sequence) {
+        sequence.reserve(4096);
         while (std::getline(input_, lineBuffer_)) {
             ++lineNumber_;
             trimTrailingCarriageReturn(lineBuffer_);

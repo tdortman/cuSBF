@@ -142,8 +142,7 @@ inline uint64_t resolveFastxChunkKmers(
     }
 
     uint64_t chunk = budget / scratchBytesPerKmer;
-    chunk = std::max(chunk, kFastxChunkFloorKmers);
-    chunk = std::min(chunk, totalItems);
+    chunk = std::clamp(chunk, kFastxChunkFloorKmers, totalItems);
 
     g_fastxChunkKmersResolved = chunk;
     g_fastxChunkKmersResolvedReserved = reservedGpuBytes;

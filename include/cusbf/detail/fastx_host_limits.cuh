@@ -37,7 +37,7 @@ static_assert(sizeof(size_t) == sizeof(uint64_t), "cuSBF assumes size_t is 64-bi
 }
 
 /// @brief True when @p raw_chunk_bytes reaches the optional host assembly cap.
-[[nodiscard]] inline bool fastx_chunk_reached_host_byte_limit(
+[[nodiscard]] inline constexpr bool fastx_chunk_reached_host_byte_limit(
     size_t host_chunk_max_bytes,
     uint64_t raw_chunk_bytes
 ) noexcept {

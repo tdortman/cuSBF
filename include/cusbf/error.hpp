@@ -136,6 +136,11 @@ struct Error {
         return Error{ResourceError{std::move(message)}};
     }
 };
+static_assert(static_cast<size_t>(ErrorCategory::cuda) == 0);
+static_assert(static_cast<size_t>(ErrorCategory::io) == 1);
+static_assert(static_cast<size_t>(ErrorCategory::fastx_parse) == 2);
+static_assert(static_cast<size_t>(ErrorCategory::invalid_argument) == 3);
+static_assert(static_cast<size_t>(ErrorCategory::resource) == 4);
 
 /**
  * @brief Fallible API result: @c cuda::std::expected<T, Error> with cuSBF factories.

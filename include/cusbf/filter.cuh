@@ -123,9 +123,9 @@ class filter {
     filter(const filter&) = delete;
     filter& operator=(const filter&) = delete;
     /// Move-constructs, transfers shard vectors and staging buffers.
-    filter(filter&&) = default;
+    filter(filter&&) noexcept = default;
     /// Move-assigns shard storage and staging buffers.
-    filter& operator=(filter&&) = default;
+    filter& operator=(filter&&) noexcept = default;
     /// Destroys device allocations and releases staging scratch.
     ~filter() = default;
 
@@ -317,7 +317,7 @@ class filter {
     }
 
     /// @brief Number of k-mer windows in a dense packed sequence of @p num_symbols symbols.
-    [[nodiscard]] uint64_t dense_packed_kmer_count(uint64_t num_symbols) const {
+    [[nodiscard]] constexpr uint64_t dense_packed_kmer_count(uint64_t num_symbols) const {
         return detail::dense_packed_kmer_count<Config>(num_symbols);
     }
 
@@ -895,11 +895,11 @@ class filter {
         return num_shards() * sizeof(block_type);
     }
 
-    [[nodiscard]] static uint64_t record_symbol_count(uint64_t bases) {
+    [[nodiscard]] static constexpr uint64_t record_symbol_count(uint64_t bases) {
         return detail::record_symbol_count<Config>(bases);
     }
 
-    [[nodiscard]] static uint64_t record_kmer_count(uint64_t bases) {
+    [[nodiscard]] static constexpr uint64_t record_kmer_count(uint64_t bases) {
         return detail::record_kmer_count<Config>(bases);
     }
 
