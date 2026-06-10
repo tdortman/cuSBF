@@ -17,6 +17,7 @@
 #include <cusbf/helpers.cuh>
 
 #include "benchmark_common.cuh"
+#include "fastx_workload.hpp"
 
 namespace bm = benchmark;
 
@@ -59,49 +60,42 @@ static void prepareFastxData() {
 
     g_fastxData = std::make_unique<FastxInputData>();
 
-    // Read insert FASTX
-    std::vector<char> hostInsert = benchmark_common::readFastxConcatenated(
-        g_insert_fastx_path, static_cast<char>(PARAM_SWEEP_ALPHABET::separator)
-    );
-    if (hostInsert.empty()) {
+    auto insertData =
+        benchmark_common::fastx_workload::load_fastx_sequence<PARAM_SWEEP_K, PARAM_SWEEP_ALPHABET>(
+            g_insert_fastx_path, static_cast<char>(PARAM_SWEEP_ALPHABET::separator)
+        );
+    if (insertData.host_sequence.empty()) {
         std::cerr << "Error: Insert FASTX file is empty or contains no sequences" << std::endl;
         std::exit(1);
     }
 
-    g_fastxData->d_insert_sequence.resize(hostInsert.size());
-    CUSBF_CUDA_CALL(cudaMemcpy(
-        thrust::raw_pointer_cast(g_fastxData->d_insert_sequence.data()),
-        hostInsert.data(),
-        hostInsert.size(),
-        cudaMemcpyHostToDevice
-    ));
-    g_fastxData->insertKmers =
-        hostInsert.size() >= PARAM_SWEEP_K ? hostInsert.size() - PARAM_SWEEP_K + 1 : 0;
+    benchmark_common::fastx_workload::upload_sequence(insertData);
+    g_fastxData->d_insert_sequence = std::move(insertData.d_sequence);
+    g_fastxData->insertKmers = insertData.kmers;
 
     // Query sequence (throughput benchmark)
     if (!g_query_fastx_path.empty()) {
-        std::vector<char> hostQuery = benchmark_common::readFastxConcatenated(
-            g_query_fastx_path, static_cast<char>(PARAM_SWEEP_ALPHABET::separator)
-        );
-        if (hostQuery.empty()) {
+        auto queryData = benchmark_common::fastx_workload::
+            load_fastx_sequence<PARAM_SWEEP_K, PARAM_SWEEP_ALPHABET>(
+                g_query_fastx_path, static_cast<char>(PARAM_SWEEP_ALPHABET::separator)
+            );
+        if (queryData.host_sequence.empty()) {
             std::cerr << "Error: Query FASTX file is empty" << std::endl;
             std::exit(1);
         }
-        g_fastxData->d_querySequence.resize(hostQuery.size());
-        CUSBF_CUDA_CALL(cudaMemcpy(
-            thrust::raw_pointer_cast(g_fastxData->d_querySequence.data()),
-            hostQuery.data(),
-            hostQuery.size(),
-            cudaMemcpyHostToDevice
-        ));
-        g_fastxData->queryKmers =
-            hostQuery.size() >= PARAM_SWEEP_K ? hostQuery.size() - PARAM_SWEEP_K + 1 : 0;
+        benchmark_common::fastx_workload::upload_sequence(queryData);
+        g_fastxData->d_querySequence = std::move(queryData.d_sequence);
+        g_fastxData->queryKmers = queryData.kmers;
     } else {
         // GPU-generated random sequence of same length as insert
 #ifdef PARAM_SWEEP_PROTEIN
-        benchmark_common::gpuGenerateProtein(g_fastxData->d_querySequence, hostInsert.size(), 1337);
+        benchmark_common::gpuGenerateProtein(
+            g_fastxData->d_querySequence, insertData.host_sequence.size(), 1337
+        );
 #else
-        benchmark_common::gpuGenerateDna(g_fastxData->d_querySequence, hostInsert.size(), 1337);
+        benchmark_common::gpuGenerateDna(
+            g_fastxData->d_querySequence, insertData.host_sequence.size(), 1337
+        );
 #endif
         g_fastxData->queryKmers = g_fastxData->insertKmers;
     }
@@ -117,8 +111,7 @@ static void prepareFastxData() {
     g_fastxData->fprKmers =
         kFprQueryLength >= PARAM_SWEEP_K ? kFprQueryLength - PARAM_SWEEP_K + 1 : 0;
 
-    // Compute filter size: 16 bits per insert k-mer, rounded up to next power-of-two shards
-    g_filter_bits = cuda::std::bit_ceil(g_fastxData->insertKmers * 16);
+    g_filter_bits = benchmark_common::resolveFastxFilterBits(g_fastxData->insertKmers);
     if (g_filter_bits == 0) {
         g_filter_bits = 256;
     }

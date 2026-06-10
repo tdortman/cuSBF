@@ -18,6 +18,7 @@
 #include <vector>
 
 #include <unistd.h>
+#include "fastx_workload.hpp"
 
 #include <cuda/std/functional>
 
@@ -169,32 +170,31 @@ static void prepareFastxData() {
     }
 
     auto data = std::make_unique<FastxData>();
-    data->host_insert = benchmark_common::readFastxConcatenated(g_insert_fastx_path);
-    if (data->host_insert.empty()) {
+    auto prepared =
+        benchmark_common::fastx_workload::load_fastx_sequence<kDnaK, cusbf::DnaAlphabet>(
+            g_insert_fastx_path
+        );
+    if (prepared.host_sequence.empty()) {
         std::cerr << "Error: FASTX file is empty or contains no sequences\n";
         std::exit(1);
     }
 
+    data->host_insert = std::move(prepared.host_sequence);
     data->num_records = effectiveNumRecords();
-    data->insert_kmers =
-        data->host_insert.size() >= kDnaK ? data->host_insert.size() - kDnaK + 1 : 0;
+    data->insert_kmers = prepared.kmers;
     data->fpr_query_kmers = g_fpr_query_kmers;
     data->query_chunk_kmers = g_fpr_query_chunk_kmers;
 
-    data->d_insert.resize(data->host_insert.size());
-    CUSBF_CUDA_CALL(cudaMemcpy(
-        thrust::raw_pointer_cast(data->d_insert.data()),
-        data->host_insert.data(),
-        data->host_insert.size(),
-        cudaMemcpyHostToDevice
-    ));
-
+    benchmark_common::fastx_workload::upload_sequence(prepared);
+    data->d_insert = std::move(prepared.d_sequence);
     data->d_insert_packed.resize(data->insert_kmers);
-    benchmark_common::gpuEncodePackedKmers<kDnaK>(
-        thrust::raw_pointer_cast(data->d_insert.data()),
-        data->host_insert.size(),
-        thrust::raw_pointer_cast(data->d_insert_packed.data())
-    );
+    if (data->insert_kmers != 0) {
+        benchmark_common::fastx_workload::encode_packed_kmers<kDnaK, cusbf::DnaAlphabet>(
+            thrust::raw_pointer_cast(data->d_insert.data()),
+            data->host_insert.size(),
+            thrust::raw_pointer_cast(data->d_insert_packed.data())
+        );
+    }
 
     data->d_query_keys.resize(data->query_chunk_kmers);
     data->d_query_seq.resize(data->query_chunk_kmers + kDnaK - 1);

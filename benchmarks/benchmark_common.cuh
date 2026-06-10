@@ -33,6 +33,7 @@
 #include <cusbf/helpers.cuh>
 #include <cusbf/superbloom_ffi.hpp>
 
+#include "fastx_workload.hpp"
 namespace benchmark_common {
 
 inline bool g_cpuFastxParallelizeRecords = false;
@@ -282,28 +283,11 @@ class CPUTimer {
 };
 
 // Concatenate all records in a FASTA/FASTQ file into a single sequence,
-// inserting @p separator between records.
-inline std::vector<char> readFastxConcatenated(std::string_view path, char separator = 'N') {
-    const std::filesystem::path file_path{path};
-    auto input = CUSBF_UNWRAP(cusbf::detail::openFastxFile(file_path));
-    cusbf::detail::FastxReader reader(*input, path);
-    cusbf::detail::FastxRecord record;
-
-    std::vector<char> sequence;
-    bool firstRecord = true;
-
-    while (true) {
-        if (!CUSBF_UNWRAP(reader.nextRecord(record))) {
-            break;
-        }
-        if (!firstRecord) {
-            sequence.push_back(separator);
-        }
-        firstRecord = false;
-        sequence.insert(sequence.end(), record.sequence.begin(), record.sequence.end());
-    }
-
-    return sequence;
+// Shared FASTX reader helper. Prefer benchmark_common::fastx_workload::load_fastx_sequence()
+// when both host and device views are needed.
+inline std::vector<char>
+readFastxConcatenated(std::string_view path, char separator = cusbf::DnaAlphabet::separator) {
+    return fastx_workload::read_fastx_concatenated(path, separator);
 }
 
 /// Split @p sequence into @p numRecords FASTA records (contiguous partitions, no extra
@@ -685,12 +669,14 @@ inline void uploadFastxSequenceToDevice(FastxInsertWorkload& workload) {
         return;
     }
     workload.d_insert_sequence.resize(workload.host_insert_sequence.size());
-    CUSBF_CUDA_CALL(cudaMemcpy(
-        thrust::raw_pointer_cast(workload.d_insert_sequence.data()),
-        workload.host_insert_sequence.data(),
-        workload.host_insert_sequence.size(),
-        cudaMemcpyHostToDevice
-    ));
+    if (!workload.host_insert_sequence.empty()) {
+        CUSBF_CUDA_CALL(cudaMemcpy(
+            thrust::raw_pointer_cast(workload.d_insert_sequence.data()),
+            workload.host_insert_sequence.data(),
+            workload.host_insert_sequence.size(),
+            cudaMemcpyHostToDevice
+        ));
+    }
     workload.gpuPrepareLevel = FastxGpuPrepareKind::SequenceOnDevice;
 }
 
@@ -701,12 +687,14 @@ inline void encodeFastxPackedKmersOnDevice(FastxInsertWorkload& workload) {
     }
     uploadFastxSequenceToDevice(workload);
     workload.d_insert_packed_kmers.resize(workload.insert_kmers);
-    gpuEncodePackedKmers<K>(
-        thrust::raw_pointer_cast(workload.d_insert_sequence.data()),
-        workload.host_insert_sequence.size(),
-        thrust::raw_pointer_cast(workload.d_insert_packed_kmers.data())
-    );
-    CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+    if (workload.insert_kmers != 0) {
+        fastx_workload::encode_packed_kmers<K, cusbf::DnaAlphabet>(
+            thrust::raw_pointer_cast(workload.d_insert_sequence.data()),
+            workload.host_insert_sequence.size(),
+            thrust::raw_pointer_cast(workload.d_insert_packed_kmers.data())
+        );
+        CUSBF_CUDA_CALL(cudaDeviceSynchronize());
+    }
     workload.gpuPrepareLevel = FastxGpuPrepareKind::PackedKmers;
 }
 
@@ -728,16 +716,16 @@ inline void prepareFastxInsertWorkload(
         std::exit(1);
     }
 
-    auto workload = std::make_unique<FastxInsertWorkload>();
-    workload->host_insert_sequence = readFastxConcatenated(g_insertFastxPath, separator);
-    if (workload->host_insert_sequence.empty()) {
+    auto prepared =
+        fastx_workload::load_fastx_sequence<K, cusbf::DnaAlphabet>(g_insertFastxPath, separator);
+    if (prepared.host_sequence.empty()) {
         std::cerr << "Error: FASTX file is empty or contains no sequences\n";
         std::exit(1);
     }
 
-    workload->insert_kmers = workload->host_insert_sequence.size() >= K
-                                 ? workload->host_insert_sequence.size() - K + 1
-                                 : 0;
+    auto workload = std::make_unique<FastxInsertWorkload>();
+    workload->host_insert_sequence = std::move(prepared.host_sequence);
+    workload->insert_kmers = prepared.kmers;
     workload->gpuPrepareLevel = FastxGpuPrepareKind::HostOnly;
 
     if (gpuPrepare == FastxGpuPrepareKind::SequenceOnDevice) {
