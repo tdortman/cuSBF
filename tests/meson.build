@@ -12,6 +12,7 @@ test_exe = executable(
         'test_fastx_dispatch.cpp',
         'test_fastx_host_limits.cpp',
         'test_normalized_record_batch.cpp',
+        'test_query_layout.cpp',
         'test_benchmark_common.cu',
     ],
     dependencies: [cusbf_dep, benchmark_dep, gtest_dep, gtest_main_dep],

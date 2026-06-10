@@ -22,8 +22,6 @@ struct NormalizedRecord {
     uint64_t record_index{};
     /// Byte offset in the dense input sequence.
     uint64_t input_offset{};
-    /// Symbol offset in the normalized sequence (k-mer index base).
-    uint64_t output_offset{};
     /// Record payload size in bytes after normalization.
     uint64_t size{};
     /// K-mer windows with no invalid symbols in this record.
@@ -34,7 +32,7 @@ struct NormalizedRecord {
  * @brief Host-resident Normalized record batch ready for bulk sequence insert/query.
  *
  * The dense sequence includes alphabet separators between records. Per-record metadata
- * maps input record ranges to k-mer offsets in the normalized sequence.
+ * maps input record ranges to normalized record slices and valid-k-mer counts.
  */
 class NormalizedRecordBatch {
    public:
@@ -159,7 +157,6 @@ static void appendPreparedRecord(
     if (!output.empty()) {
         appendRecordBoundary<Config>(output);
     }
-    const uint64_t output_offset = record_symbol_count<Config>(output.size());
     output.append(record_sequence);
     const uint64_t valid_kmers = sequence_may_have_invalid_symbols<Config>(record_sequence)
                                      ? valid_record_kmer_count<Config>(record_sequence)
@@ -168,7 +165,6 @@ static void appendPreparedRecord(
         NormalizedRecord{
             record_index,
             input_offset,
-            output_offset,
             static_cast<uint64_t>(record_sequence.size()),
             valid_kmers,
         }
@@ -257,7 +253,6 @@ inline void normalize_record_batch_into_buffer(
             batch.sequence.substr(record.sequenceOffset, record.sequenceBytes);
 
         write_cursor = write_record_boundary<Config>(write_cursor, logical_size);
-        const uint64_t output_offset = normalized_batch_logical_size<Config>(logical_size);
         std::memcpy(
             write_cursor, record_sequence.data(), static_cast<size_t>(record_sequence.size())
         );
@@ -271,7 +266,6 @@ inline void normalize_record_batch_into_buffer(
             NormalizedRecord{
                 record_index,
                 record.sequenceOffset,
-                output_offset,
                 static_cast<uint64_t>(record_sequence.size()),
                 valid_kmers,
             }

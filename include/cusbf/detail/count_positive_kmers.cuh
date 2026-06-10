@@ -10,18 +10,18 @@
 #include <cstdint>
 
 #include <cusbf/config.cuh>
+#include <cusbf/detail/query_layout.cuh>
 #include <cusbf/device_span.cuh>
 #include <cusbf/error.hpp>
 #include <cusbf/helpers.cuh>
-#include <cusbf/normalized_record_batch.hpp>
 
 namespace cusbf::detail {
 
-/// @brief Per-record kernel: sums @c hits[output_offset ..] for each @ref NormalizedRecord.
+/// @brief Per-record kernel: sums @c hits[hit_offset ..] for each @ref QueryLayoutRecord.
 template <typename Config>
 __global__ void count_positive_kmers_per_record_kernel(
     const uint8_t* hits,
-    const NormalizedRecord* records,
+    const QueryLayoutRecord* records,
     uint64_t* positive_kmers_out,
     uint64_t record_count
 ) {
@@ -30,17 +30,15 @@ __global__ void count_positive_kmers_per_record_kernel(
         return;
     }
 
-    const NormalizedRecord& record = records[record_index];
-    const uint64_t symbols = record.size / Config::symbolWidth;
-    const uint64_t kmers = symbols < Config::k ? 0 : symbols - Config::k + 1;
-    if (kmers == 0) {
+    const QueryLayoutRecord& record = records[record_index];
+    if (record.hit_count == 0) {
         positive_kmers_out[record_index] = 0;
         return;
     }
 
     uint64_t positive = 0;
-    const uint64_t begin = record.output_offset;
-    for (uint64_t i = 0; i < kmers; ++i) {
+    const uint64_t begin = record.hit_offset;
+    for (uint64_t i = 0; i < record.hit_count; ++i) {
         positive += hits[begin + i];
     }
     positive_kmers_out[record_index] = positive;
@@ -71,7 +69,7 @@ count_positive_kmers_total(device_span<const uint8_t> hits, cuda::stream_ref str
 template <typename Config>
 [[nodiscard]] inline Result<void> count_positive_kmers_per_record(
     device_span<const uint8_t> hits,
-    device_span<const NormalizedRecord> records,
+    device_span<const QueryLayoutRecord> records,
     device_span<uint64_t> positive_kmers_out,
     cuda::stream_ref stream
 ) {
