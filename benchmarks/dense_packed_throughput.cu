@@ -322,9 +322,9 @@ BENCHMARK_DEFINE_F(DensePackedHostThroughputFixture, DenseQuery)(bm::State& stat
 
     for (auto _ : state) {
         fix.timer.start();
-        cusbf::require_void(
-            fix.inputs_.filter->contains_dense_packed(query_words, fix.inputs_.num_symbols, output_span)
-        );
+        cusbf::require_void(fix.inputs_.filter->contains_dense_packed(
+            query_words, fix.inputs_.num_symbols, output_span
+        ));
         state.SetIterationTime(fix.timer.elapsed());
         benchmark::DoNotOptimize(thrust::raw_pointer_cast(fix.inputs_.query_output.data()));
     }
