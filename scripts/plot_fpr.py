@@ -315,10 +315,12 @@ def main(
         )
 
     ax.set_xlabel(
-        "Filter memory [bytes]", fontsize=pu.AXIS_LABEL_FONT_SIZE, fontweight="bold"
+        pu.paper_text("Filter memory [bytes]", bold=True),
+        fontsize=pu.AXIS_LABEL_FONT_SIZE,
     )
     ax.set_ylabel(
-        "False Positive Rate [%]", fontsize=pu.AXIS_LABEL_FONT_SIZE, fontweight="bold"
+        pu.paper_text("False Positive Rate [%]", bold=True),
+        fontsize=pu.AXIS_LABEL_FONT_SIZE,
     )
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
@@ -341,18 +343,11 @@ def main(
     )
 
     output_file = output_dir / "fpr_vs_memory.pdf"
-    plt.savefig(
+    pu.save_figure(
+        fig,
         output_file,
-        bbox_inches="tight",
-        transparent=True,
-        format="pdf",
-        dpi=600,
-    )
-    typer.secho(
         f"FPR vs memory plot saved to {output_file.absolute()}",
-        fg=typer.colors.GREEN,
     )
-    plt.close()
 
     # Plot 2: Bits per Item vs Memory Size
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -382,9 +377,12 @@ def main(
         )
 
     ax.set_xlabel(
-        "Memory Size [bytes]", fontsize=pu.AXIS_LABEL_FONT_SIZE, fontweight="bold"
+        pu.paper_text("Memory Size [bytes]", bold=True),
+        fontsize=pu.AXIS_LABEL_FONT_SIZE,
     )
-    ax.set_ylabel("Bits per Item", fontsize=pu.AXIS_LABEL_FONT_SIZE, fontweight="bold")
+    ax.set_ylabel(
+        pu.paper_text("Bits per Item", bold=True), fontsize=pu.AXIS_LABEL_FONT_SIZE
+    )
     ax.set_xscale("log", base=2)
     ax.tick_params(axis="both", labelsize=pu.AXIS_LABEL_FONT_SIZE)
     ax.grid(True, which="both", ls="--", alpha=pu.GRID_ALPHA)
@@ -405,18 +403,11 @@ def main(
     )
 
     output_file = output_dir / "bits_per_item_vs_memory.pdf"
-    plt.savefig(
+    pu.save_figure(
+        fig,
         output_file,
-        bbox_inches="tight",
-        transparent=True,
-        format="pdf",
-        dpi=600,
-    )
-    typer.secho(
         f"Bits per item plot saved to {output_file.absolute()}",
-        fg=typer.colors.GREEN,
     )
-    plt.close()
 
     typer.secho("\nAll plots generated successfully!", fg=typer.colors.GREEN, bold=True)
 
