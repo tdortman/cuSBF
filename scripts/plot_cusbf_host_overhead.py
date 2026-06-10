@@ -146,9 +146,8 @@ def load_pipeline_throughput(csv_path: Path) -> PipelineThroughput:
 def apply_throughput_ylabel(ax: Axes) -> None:
     """Bold throughput y-label sized to fit this short panel without clipping."""
     ax.set_ylabel(
-        pu.THROUGHPUT_LABEL,
+        pu.paper_text(pu.THROUGHPUT_LABEL, bold=True),
         fontsize=_YLABEL_FONT_SIZE,
-        fontweight="bold",
         labelpad=3,
     )
     ax.yaxis.set_label_coords(_YLABEL_COORD_X, 0.5)
@@ -398,7 +397,11 @@ def plot_absolute_panel(
     ax.set_xlim(-0.55, (len(_OPERATIONS) - 1) * _GROUP_SPACING + 0.55)
 
     if show_ylabel:
-        ax.set_ylabel(pu.THROUGHPUT_LABEL, fontsize=pu.AXIS_LABEL_FONT_SIZE, labelpad=2)
+        ax.set_ylabel(
+            pu.paper_text(pu.THROUGHPUT_LABEL, bold=True),
+            fontsize=pu.AXIS_LABEL_FONT_SIZE,
+            labelpad=2,
+        )
     ax.grid(True, axis="y", ls="--", alpha=pu.GRID_ALPHA)
 
 
