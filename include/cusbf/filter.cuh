@@ -1141,99 +1141,64 @@ class filter {
         cuda::stream_ref stream,
         detail::fastx_dispatch_path dispatch_path
     ) {
-        detail::FastxRecord record;
-        FastxInsertReport report;
-
-        const auto gpu_memory = detail::query_cuda_free_memory();
-        if (!gpu_memory) {
-            return Err(Error::resource(gpu_memory.error().message()));
-        }
-        const auto staging_budget_bytes =
-            detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
-        const auto host_chunk_max_bytes = detail::fastx_host_chunk_max_bytes();
-        const uint64_t sequence_reserve_bytes = detail::fastx_uses_mmap_reader(dispatch_path)
-                                                    ? detail::fastx_file_bytes(source_name)
-                                                    : 0;
-        DenseRecordBatchBuilder chunk(sequence_reserve_bytes);
-
-        if (detail::fastx_is_single_chunk_path(dispatch_path) && stream.get() == nullptr) {
-            for (;;) {
-                if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
-                    break;
-                }
+        struct InsertAdapter {
+            using report_type = FastxInsertReport;
+            [[nodiscard]] detail::fastx_chunk_mode chunk_mode() const {
+                return detail::fastx_chunk_mode::insert;
             }
-            if (!chunk.empty()) {
+
+            [[nodiscard]] bool supports_pipelined() const {
+                return true;
+            }
+
+            filter& self;
+            FastxInsertReport report{};
+
+            void
+            on_record_collected(detail::FastxRecord&, uint64_t, DenseRecordBatchBuilder&) const {}
+
+            [[nodiscard]] Result<void>
+            flush_sync(DenseRecordBatchBuilder& chunk, cuda::stream_ref stream) {
+                if (chunk.empty()) {
+                    return {};
+                }
                 accumulate_insert_report(
-                    report, CUSBF_TRY(insert_record_batch(chunk.view(), stream))
+                    report, CUSBF_TRY(self.insert_record_batch(chunk.view(), stream))
                 );
-            }
-            release_fastx_staging_scratch();
-            return report;
-        }
-
-        if (!detail::fastx_is_single_chunk_path(dispatch_path) && stream.get() == nullptr) {
-            const size_t pipelined_chunk_budget = detail::fastx_pipelined_chunk_budget(
-                detail::fastx_chunk_mode::insert, staging_budget_bytes
-            );
-            detail::ChunkStreamPair chunk_streams;
-            size_t ping = 0;
-            bool has_inflight = false;
-
-            auto flush = [&]() -> Result<void> {
-                return flush_chunk_insert_pipelined(
-                    chunk, report, chunk_streams, ping, has_inflight
-                );
-            };
-
-            for (;;) {
-                if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
-                    break;
-                }
-                if (detail::fastx_chunk_should_flush<Config>(
-                        detail::fastx_chunk_mode::insert,
-                        pipelined_chunk_budget,
-                        host_chunk_max_bytes,
-                        chunk.raw_sequence_bytes(),
-                        chunk.recordCount()
-                    )) {
-                    CUSBF_TRY(flush());
-                }
-            }
-
-            CUSBF_TRY(flush());
-            CUSBF_TRY(chunk_streams.sync_all());
-            release_fastx_host_pings();
-            release_fastx_device_staging();
-            return report;
-        }
-
-        auto flush = [&]() -> Result<void> {
-            if (chunk.empty()) {
+                chunk.clear_and_shrink();
                 return {};
             }
-            accumulate_insert_report(report, CUSBF_TRY(insert_record_batch(chunk.view(), stream)));
-            chunk.clear_and_shrink();
-            return {};
+
+            [[nodiscard]] Result<void> flush_pipelined(
+                DenseRecordBatchBuilder& chunk,
+                detail::ChunkStreamPair& chunk_streams,
+                size_t& ping,
+                bool& has_inflight
+            ) {
+                return self.flush_chunk_insert_pipelined(
+                    chunk, report, chunk_streams, ping, has_inflight
+                );
+            }
+
+            [[nodiscard]] Result<void>
+            finish_pipelined(detail::ChunkStreamPair&, size_t&, bool&) const {
+                return {};
+            }
+
+            [[nodiscard]] Result<FastxInsertReport> finish() {
+                return report;
+            }
         };
 
-        for (;;) {
-            if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
-                break;
-            }
-            if (detail::fastx_chunk_should_flush<Config>(
-                    detail::fastx_chunk_mode::insert,
-                    staging_budget_bytes,
-                    host_chunk_max_bytes,
-                    chunk.raw_sequence_bytes(),
-                    chunk.recordCount()
-                )) {
-                CUSBF_TRY(flush());
-            }
-        }
-
-        CUSBF_TRY(flush());
-        release_fastx_staging_scratch();
-        return report;
+        return detail::run_fastx_pipeline<Config>(
+            reader,
+            source_name,
+            fill_fraction,
+            stream,
+            dispatch_path,
+            fastx_state_,
+            InsertAdapter{*this}
+        );
     }
 
     /// @brief Internal implementation shared by query_fastx() and query_fastx_file().
@@ -1257,105 +1222,69 @@ class filter {
         cuda::stream_ref stream,
         detail::fastx_dispatch_path dispatch_path
     ) const {
-        detail::FastxRecord record;
-        FastxQueryReport report;
-
-        const auto gpu_memory = detail::query_cuda_free_memory();
-        if (!gpu_memory) {
-            return Err(Error::resource(gpu_memory.error().message()));
-        }
-        const auto staging_budget_bytes =
-            detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
-        const auto host_chunk_max_bytes = detail::fastx_host_chunk_max_bytes();
-        const uint64_t sequence_reserve_bytes = detail::fastx_uses_mmap_reader(dispatch_path)
-                                                    ? detail::fastx_file_bytes(source_name)
-                                                    : 0;
-        DenseRecordBatchBuilder chunk(sequence_reserve_bytes);
-
-        if (detail::fastx_is_single_chunk_path(dispatch_path) && stream.get() == nullptr) {
-            for (;;) {
-                if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
-                    break;
-                }
+        struct QueryAdapter {
+            using report_type = FastxQueryReport;
+            [[nodiscard]] detail::fastx_chunk_mode chunk_mode() const {
+                return detail::fastx_chunk_mode::query;
             }
-            if (!chunk.empty()) {
+
+            [[nodiscard]] bool supports_pipelined() const {
+                return true;
+            }
+
+            const filter& self;
+            FastxQueryReport report{};
+
+            void
+            on_record_collected(detail::FastxRecord&, uint64_t, DenseRecordBatchBuilder&) const {}
+
+            [[nodiscard]] Result<void>
+            flush_sync(DenseRecordBatchBuilder& chunk, cuda::stream_ref stream) {
+                if (chunk.empty()) {
+                    return {};
+                }
                 accumulate_query_report(
-                    report, CUSBF_TRY(query_record_batch_aggregate(chunk.view(), stream))
+                    report, CUSBF_TRY(self.query_record_batch_aggregate(chunk.view(), stream))
                 );
-            }
-            release_fastx_staging_scratch();
-            return report;
-        }
-
-        if (!detail::fastx_is_single_chunk_path(dispatch_path) && stream.get() == nullptr) {
-            const size_t pipelined_chunk_budget = detail::fastx_pipelined_chunk_budget(
-                detail::fastx_chunk_mode::query, staging_budget_bytes
-            );
-            detail::ChunkStreamPair chunk_streams;
-            size_t ping = 0;
-            bool has_inflight = false;
-
-            auto flush = [&]() -> Result<void> {
-                return flush_chunk_query_aggregate_pipelined(
-                    chunk, report, chunk_streams, ping, has_inflight
-                );
-            };
-
-            for (;;) {
-                if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
-                    break;
-                }
-                if (detail::fastx_chunk_should_flush<Config>(
-                        detail::fastx_chunk_mode::query,
-                        pipelined_chunk_budget,
-                        host_chunk_max_bytes,
-                        chunk.raw_sequence_bytes(),
-                        chunk.recordCount()
-                    )) {
-                    CUSBF_TRY(flush());
-                }
-            }
-
-            CUSBF_TRY(flush());
-            CUSBF_TRY(chunk_streams.sync_all());
-            release_fastx_host_pings();
-            release_fastx_device_staging();
-            return report;
-        }
-
-        auto flush = [&]() -> Result<void> {
-            if (chunk.empty()) {
+                chunk.clear_and_shrink();
                 return {};
             }
-            accumulate_query_report(
-                report, CUSBF_TRY(query_record_batch_aggregate(chunk.view(), stream))
-            );
-            chunk.clear_and_shrink();
-            return {};
+
+            [[nodiscard]] Result<void> flush_pipelined(
+                DenseRecordBatchBuilder& chunk,
+                detail::ChunkStreamPair& chunk_streams,
+                size_t& ping,
+                bool& has_inflight
+            ) {
+                return self.flush_chunk_query_aggregate_pipelined(
+                    chunk, report, chunk_streams, ping, has_inflight
+                );
+            }
+
+            [[nodiscard]] Result<void>
+            finish_pipelined(detail::ChunkStreamPair&, size_t&, bool&) const {
+                return {};
+            }
+
+            [[nodiscard]] Result<FastxQueryReport> finish() {
+                return report;
+            }
         };
 
-        for (;;) {
-            if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
-                break;
-            }
-            if (detail::fastx_chunk_should_flush<Config>(
-                    detail::fastx_chunk_mode::query,
-                    staging_budget_bytes,
-                    host_chunk_max_bytes,
-                    chunk.raw_sequence_bytes(),
-                    chunk.recordCount()
-                )) {
-                CUSBF_TRY(flush());
-            }
-        }
-
-        CUSBF_TRY(flush());
-        release_fastx_staging_scratch();
-        return report;
+        return detail::run_fastx_pipeline<Config>(
+            reader,
+            source_name,
+            fill_fraction,
+            stream,
+            dispatch_path,
+            fastx_state_,
+            QueryAdapter{*this}
+        );
     }
 
     void accumulate_normalized_insert_report(FastxInsertReport& report, size_t ping_slot) const {
-        const std::vector<NormalizedRecord>& records = normalized_records_pings_[ping_slot & 1U];
+        const std::vector<NormalizedRecord>& records =
+            fastx_state_.normalized_records_ping(ping_slot);
         report.recordsIndexed += records.size();
         for (const NormalizedRecord& record : records) {
             report.indexedBases += record.size;
@@ -1469,131 +1398,296 @@ class filter {
     template <typename FastxReaderType, FastxRecordConsumer Consumer>
     [[nodiscard]] Result<FastxQueryReport> query_fastx_records_stream(
         FastxReaderType& reader,
-        [[maybe_unused]] std::string_view source_name,
+        std::string_view source_name,
         Consumer&& consume,
         double fill_fraction,
         cuda::stream_ref stream,
         detail::fastx_dispatch_path dispatch_path
     ) const {
-        detail::FastxRecord record;
-        FastxQueryReport report;
+        struct DetailedQueryAdapter {
+            using report_type = FastxQueryReport;
 
-        const auto gpu_memory = detail::query_cuda_free_memory();
-        if (!gpu_memory) {
-            return Err(Error::resource(gpu_memory.error().message()));
-        }
-        const auto staging_budget_bytes =
-            detail::fastx_staging_budget_bytes<Config>(fill_fraction, gpu_memory->free_bytes);
-        const auto host_chunk_max_bytes = detail::fastx_host_chunk_max_bytes();
-        DenseRecordBatchBuilder chunk;
-        std::vector<FastxRecordHeaderRef> record_headers;
-        uint64_t record_indexBase = 0;
+            struct PendingChunk {
+                std::string sequence{};
+                std::vector<RecordRange> ranges{};
+                std::vector<FastxRecordHeaderRef> record_headers{};
+                detail::QueryLayout layout{};
+                std::vector<uint64_t> positive_kmers{};
+                std::vector<uint8_t> hits{};
+                uint64_t record_index_base{};
+                bool ready{};
 
-        if (detail::fastx_is_single_chunk_path(dispatch_path)) {
-            for (;;) {
-                const uint64_t local_index = chunk.recordCount();
-                if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
-                    break;
+                void clear() {
+                    sequence.clear();
+                    ranges.clear();
+                    record_headers.clear();
+                    layout = detail::QueryLayout{};
+                    positive_kmers.clear();
+                    hits.clear();
+                    record_index_base = 0;
+                    ready = false;
                 }
+            };
+
+            [[nodiscard]] detail::fastx_chunk_mode chunk_mode() const {
+                return detail::fastx_chunk_mode::query;
+            }
+
+            [[nodiscard]] bool supports_pipelined() const {
+                return true;
+            }
+
+            const filter& self;
+            Consumer& consume;
+            FastxQueryReport report{};
+            std::vector<FastxRecordHeaderRef> record_headers{};
+            uint64_t record_index_base{0};
+            PendingChunk pending_chunks[2]{};
+
+            DetailedQueryAdapter(const filter& self_in, Consumer& consume_in)
+                : self(self_in), consume(consume_in), pending_chunks{} {}
+
+            void on_record_collected(
+                detail::FastxRecord& record,
+                uint64_t local_index,
+                DenseRecordBatchBuilder&
+            ) {
                 record_headers.push_back(
                     FastxRecordHeaderRef{std::move(record.header), local_index}
                 );
             }
 
-            if (!chunk.empty()) {
-                const FastxQueryReport chunkReport = CUSBF_TRY(query_record_batch(
+            [[nodiscard]] Result<void> retire_pending_chunk(size_t slot) {
+                PendingChunk& pending = pending_chunks[slot];
+                if (!pending.ready) {
+                    return {};
+                }
+
+                const auto all_hits =
+                    std::span<const uint8_t>{pending.hits.data(), pending.hits.size()};
+                for (size_t layout_index = 0; layout_index < pending.layout.records().size();
+                     ++layout_index) {
+                    const detail::QueryLayoutRecord& record =
+                        pending.layout.records()[layout_index];
+                    const RecordRange& range =
+                        pending.ranges[static_cast<size_t>(record.record_index)];
+                    const FastxRecordHeaderRef& record_header =
+                        pending.record_headers[static_cast<size_t>(record.record_index)];
+                    const auto sequence = std::string_view{pending.sequence}.substr(
+                        static_cast<size_t>(range.sequenceOffset),
+                        static_cast<size_t>(range.sequenceBytes)
+                    );
+                    const auto hit_span =
+                        record.hit_count == 0
+                            ? std::span<const uint8_t>{}
+                            : pending.layout.hits_for_record(all_hits, layout_index);
+                    const uint64_t positive_kmers = pending.positive_kmers[layout_index];
+                    report.positive_kmers += positive_kmers;
+                    consume(
+                        FastxRecordView{
+                            pending.record_index_base + record_header.record_index,
+                            record_header.header,
+                            sequence,
+                            record.size,
+                            record.valid_kmers,
+                            positive_kmers,
+                            hit_span,
+                        }
+                    );
+                }
+
+                pending.clear();
+                return {};
+            }
+
+            [[nodiscard]] Result<void>
+            flush_sync(DenseRecordBatchBuilder& chunk, cuda::stream_ref stream) {
+                if (chunk.empty()) {
+                    return {};
+                }
+                const FastxQueryReport chunk_report = CUSBF_TRY(self.query_record_batch(
                     chunk.view(),
-                    [&](const RecordQueryView& recordView) {
+                    [&](const RecordQueryView& record_view) {
                         const FastxRecordHeaderRef& record_header =
-                            record_headers[static_cast<size_t>(recordView.record_index)];
+                            record_headers[static_cast<size_t>(record_view.record_index)];
                         const RecordRange& range =
-                            chunk.ranges()[static_cast<size_t>(recordView.record_index)];
+                            chunk.ranges()[static_cast<size_t>(record_view.record_index)];
                         consume(
                             FastxRecordView{
-                                record_header.record_index,
+                                record_index_base + record_header.record_index,
                                 record_header.header,
                                 chunk.sequence_view().substr(
                                     static_cast<size_t>(range.sequenceOffset),
                                     static_cast<size_t>(range.sequenceBytes)
                                 ),
-                                recordView.queriedBases,
-                                recordView.queriedKmers,
-                                recordView.positive_kmers,
-                                recordView.hits,
+                                record_view.queriedBases,
+                                record_view.queriedKmers,
+                                record_view.positive_kmers,
+                                record_view.hits,
                             }
                         );
                     },
                     stream
                 ));
-                accumulate_query_report(report, chunkReport);
-            }
-
-            release_fastx_staging_scratch();
-            return report;
-        }
-
-        const size_t chunk_flush_budget =
-            stream.get() == nullptr ? detail::fastx_pipelined_chunk_budget(
-                                          detail::fastx_chunk_mode::query, staging_budget_bytes
-                                      )
-                                    : staging_budget_bytes;
-
-        auto flush = [&]() -> Result<void> {
-            if (chunk.empty()) {
+                accumulate_query_report(report, chunk_report);
+                record_index_base += chunk.recordCount();
+                chunk.clear();
+                record_headers.clear();
                 return {};
             }
-            const FastxQueryReport chunkReport = CUSBF_TRY(query_record_batch(
-                chunk.view(),
-                [&](const RecordQueryView& recordView) {
-                    const FastxRecordHeaderRef& record_header =
-                        record_headers[static_cast<size_t>(recordView.record_index)];
-                    const RecordRange& range =
-                        chunk.ranges()[static_cast<size_t>(recordView.record_index)];
-                    consume(
-                        FastxRecordView{
-                            record_indexBase + record_header.record_index,
-                            record_header.header,
-                            chunk.sequence_view().substr(
-                                static_cast<size_t>(range.sequenceOffset),
-                                static_cast<size_t>(range.sequenceBytes)
+
+            [[nodiscard]] Result<void> flush_pipelined(
+                DenseRecordBatchBuilder& chunk,
+                detail::ChunkStreamPair& chunk_streams,
+                size_t& ping,
+                bool& has_inflight
+            ) {
+                if (chunk.empty()) {
+                    return {};
+                }
+
+                if (has_inflight) {
+                    const size_t completed_slot = (ping - 1U) & 1U;
+                    CUSBF_CUDA_TRY(cudaStreamSynchronize(chunk_streams[completed_slot].get()));
+                    CUSBF_TRY(retire_pending_chunk(completed_slot));
+                    has_inflight = false;
+                }
+
+                const size_t slot = ping & 1U;
+                const cuda::stream_ref active_stream = chunk_streams[slot];
+                PendingChunk& pending = pending_chunks[slot];
+                pending.clear();
+                pending.sequence.assign(chunk.sequence_view());
+                pending.ranges.assign(chunk.ranges().begin(), chunk.ranges().end());
+                pending.record_headers = std::move(record_headers);
+                pending.record_index_base = record_index_base;
+
+                CUSBF_TRY(self.normalize_record_batch_into_pinned(
+                    chunk.view(),
+                    self.fastx_state_.normalized_sequence_ping(slot),
+                    self.fastx_state_.normalized_records_ping(slot)
+                ));
+                self.accumulate_normalized_query_report(report, slot);
+                pending.layout = detail::QueryLayout::build<Config>(
+                    self.fastx_state_.normalized_records_ping(slot)
+                );
+
+                const uint64_t chunk_records = chunk.recordCount();
+                chunk.clear();
+                record_index_base += chunk_records;
+
+                if (self.fastx_state_.normalized_sequence_ping(slot).size() == 0) {
+                    pending.ready = true;
+                    CUSBF_TRY(retire_pending_chunk(slot));
+                    return {};
+                }
+
+                const auto d_sequence = CUSBF_TRY(self.fastx_state_.stage_sequence_ping(
+                    ping, self.fastx_state_.normalized_sequence_ping(slot).view(), active_stream
+                ));
+                const uint64_t num_kmers = pending.layout.total_hit_count();
+                self.fastx_state_.ensure_result_capacity(num_kmers);
+                CUSBF_TRY(self.launch_contains_sequence(
+                    d_sequence,
+                    device_span<uint8_t>{
+                        thrust::raw_pointer_cast(self.fastx_state_.result_buffer_device().data()),
+                        num_kmers
+                    },
+                    active_stream
+                ));
+
+                const uint64_t record_count = pending.layout.records().size();
+                if (record_count > self.fastx_state_.query_layout_records_device().size()) {
+                    self.fastx_state_.query_layout_records_device().resize(record_count);
+                }
+                if (record_count > self.fastx_state_.record_positive_kmers_device().size()) {
+                    self.fastx_state_.record_positive_kmers_device().resize(record_count);
+                }
+                CUSBF_CUDA_TRY(cudaMemcpyAsync(
+                    thrust::raw_pointer_cast(
+                        self.fastx_state_.query_layout_records_device().data()
+                    ),
+                    pending.layout.records().data(),
+                    record_count * sizeof(detail::QueryLayoutRecord),
+                    cudaMemcpyHostToDevice,
+                    active_stream.get()
+                ));
+                CUSBF_TRY(
+                    detail::count_positive_kmers_per_record<Config>(
+                        device_span<const uint8_t>{
+                            thrust::raw_pointer_cast(
+                                self.fastx_state_.result_buffer_device().data()
                             ),
-                            recordView.queriedBases,
-                            recordView.queriedKmers,
-                            recordView.positive_kmers,
-                            recordView.hits,
-                        }
-                    );
-                },
-                stream
-            ));
-            accumulate_query_report(report, chunkReport);
-            record_indexBase += chunk.recordCount();
-            chunk.clear_and_shrink();
-            record_headers.clear();
-            record_headers.shrink_to_fit();
-            return {};
+                            num_kmers
+                        },
+                        device_span<const detail::QueryLayoutRecord>{
+                            thrust::raw_pointer_cast(
+                                self.fastx_state_.query_layout_records_device().data()
+                            ),
+                            record_count
+                        },
+                        device_span<uint64_t>{
+                            thrust::raw_pointer_cast(
+                                self.fastx_state_.record_positive_kmers_device().data()
+                            ),
+                            record_count
+                        },
+                        active_stream
+                    )
+                );
+
+                pending.positive_kmers.resize(record_count);
+                CUSBF_CUDA_TRY(cudaMemcpyAsync(
+                    pending.positive_kmers.data(),
+                    thrust::raw_pointer_cast(
+                        self.fastx_state_.record_positive_kmers_device().data()
+                    ),
+                    record_count * sizeof(uint64_t),
+                    cudaMemcpyDeviceToHost,
+                    active_stream.get()
+                ));
+
+                pending.hits.resize(num_kmers);
+                CUSBF_CUDA_TRY(cudaMemcpyAsync(
+                    pending.hits.data(),
+                    thrust::raw_pointer_cast(self.fastx_state_.result_buffer_device().data()),
+                    num_kmers * sizeof(uint8_t),
+                    cudaMemcpyDeviceToHost,
+                    active_stream.get()
+                ));
+
+                pending.ready = true;
+                has_inflight = true;
+                ping += 1;
+                return {};
+            }
+
+            [[nodiscard]] Result<void>
+            finish_pipelined(detail::ChunkStreamPair&, size_t& ping, bool& has_inflight) {
+                if (!has_inflight) {
+                    return {};
+                }
+
+                const size_t completed_slot = (ping - 1U) & 1U;
+                CUSBF_TRY(retire_pending_chunk(completed_slot));
+                has_inflight = false;
+                return {};
+            }
+
+            [[nodiscard]] Result<FastxQueryReport> finish() {
+                return report;
+            }
         };
 
-        for (;;) {
-            const uint64_t local_index = chunk.recordCount();
-            if (!CUSBF_TRY(detail::collect_next_fastx_record(reader, record, chunk))) {
-                break;
-            }
-            record_headers.push_back(FastxRecordHeaderRef{std::move(record.header), local_index});
-            if (detail::fastx_chunk_should_flush<Config>(
-                    detail::fastx_chunk_mode::query,
-                    chunk_flush_budget,
-                    host_chunk_max_bytes,
-                    chunk.raw_sequence_bytes(),
-                    chunk.recordCount()
-                )) {
-                CUSBF_TRY(flush());
-            }
-        }
-
-        CUSBF_TRY(flush());
-        release_fastx_staging_scratch();
-        return report;
+        return detail::run_fastx_pipeline<Config>(
+            reader,
+            source_name,
+            fill_fraction,
+            stream,
+            dispatch_path,
+            fastx_state_,
+            DetailedQueryAdapter{*this, consume}
+        );
     }
 
     /// @brief Internal implementation shared by query_fastx_detailed() and
