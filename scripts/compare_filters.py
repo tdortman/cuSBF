@@ -273,9 +273,8 @@ def plot_bar_on_axis(
     )
     if show_ylabel:
         ax.set_ylabel(
-            pu.THROUGHPUT_LABEL,
+            pu.paper_text(pu.THROUGHPUT_LABEL, bold=True),
             fontsize=pu.AXIS_LABEL_FONT_SIZE,
-            fontweight="bold",
             labelpad=10,
         )
 
@@ -390,14 +389,7 @@ def save_bar_subplot(
         bottom=_SUBPLOT_BOTTOM_MARGIN,
         top=_SUBPLOT_TOP_MARGIN,
     )
-    fig.savefig(
-        output_path,
-        transparent=True,
-        format="pdf",
-        dpi=600,
-    )
-    typer.secho(message, fg=typer.colors.GREEN)
-    plt.close(fig)
+    pu.save_figure(fig, output_path, message)
     return legend_patches
 
 
@@ -445,16 +437,7 @@ def save_bar_legend_figure(
             framealpha=pu.LEGEND_FRAME_ALPHA,
         )
 
-    fig.savefig(
-        output_path,
-        bbox_inches="tight",
-        pad_inches=0,
-        transparent=True,
-        format="pdf",
-        dpi=600,
-    )
-    typer.secho(message, fg=typer.colors.GREEN)
-    plt.close(fig)
+    pu.save_figure(fig, output_path, message)
 
 
 def split_bar_legend_elements(
