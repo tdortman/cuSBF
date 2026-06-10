@@ -90,6 +90,9 @@
 
               ninja
               cmake
+
+              texliveFull
+              tex-fmt
             ]
             ++ [
               rustToolchain
