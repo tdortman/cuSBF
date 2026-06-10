@@ -664,6 +664,47 @@ TEST_F(BloomFilterTest, ForcedFastxChunkFlushPreservesRecordOrderAndCounts) {
     EXPECT_TRUE(allOnes(detailed.records[2].hits));
 }
 
+TEST_F(BloomFilterTest, DetailedFastxQueryMatchesExplicitStreamPath) {
+    cusbf::filter<TestConfig> filter(1 << 12);
+    constexpr double fill_fraction = 0.0;
+
+    const auto file = writeTempFile(
+        ">first\n"
+        "ACGTACGT\n"
+        ">second\n"
+        "ACGTNACGTACGTA\n"
+        ">third\n"
+        "TGCATGCA\n"
+    );
+
+    (void)CUSBF_UNWRAP(filter.insert_fastx_file(file.path, fill_fraction));
+    const auto default_report =
+        CUSBF_UNWRAP(filter.query_fastx_file_detailed(file.path, fill_fraction));
+
+    cudaStream_t explicit_stream = nullptr;
+    CUSBF_CUDA_CALL(cudaStreamCreateWithFlags(&explicit_stream, cudaStreamNonBlocking));
+    const auto streamed_report =
+        CUSBF_UNWRAP(filter.query_fastx_file_detailed(file.path, fill_fraction, explicit_stream));
+    CUSBF_CUDA_CALL(cudaStreamDestroy(explicit_stream));
+
+    EXPECT_EQ(streamed_report.summary.recordsQueried, default_report.summary.recordsQueried);
+    EXPECT_EQ(streamed_report.summary.queriedBases, default_report.summary.queriedBases);
+    EXPECT_EQ(streamed_report.summary.queriedKmers, default_report.summary.queriedKmers);
+    EXPECT_EQ(streamed_report.summary.positive_kmers, default_report.summary.positive_kmers);
+    ASSERT_EQ(streamed_report.records.size(), default_report.records.size());
+    for (size_t i = 0; i < streamed_report.records.size(); ++i) {
+        EXPECT_EQ(streamed_report.records[i].record_index, default_report.records[i].record_index);
+        EXPECT_EQ(streamed_report.records[i].header, default_report.records[i].header);
+        EXPECT_EQ(streamed_report.records[i].sequence, default_report.records[i].sequence);
+        EXPECT_EQ(streamed_report.records[i].queriedBases, default_report.records[i].queriedBases);
+        EXPECT_EQ(streamed_report.records[i].queriedKmers, default_report.records[i].queriedKmers);
+        EXPECT_EQ(
+            streamed_report.records[i].positive_kmers, default_report.records[i].positive_kmers
+        );
+        EXPECT_EQ(streamed_report.records[i].hits, default_report.records[i].hits);
+    }
+}
+
 TEST_F(BloomFilterTest, MalformedFastqThrowsOnQualityLengthMismatch) {
     cusbf::filter<TestConfig> filter(1 << 12);
 
