@@ -271,13 +271,22 @@ def plot_bar_on_axis(
         xscale=None,
         yscale="log",
     )
+    ylabel = pu.paper_text(pu.THROUGHPUT_LABEL, bold=True)
     if show_ylabel:
         ax.set_ylabel(
-            pu.paper_text(pu.THROUGHPUT_LABEL, bold=True),
+            ylabel,
             fontsize=pu.AXIS_LABEL_FONT_SIZE,
             labelpad=10,
         )
-
+    else:
+        # Keep both cropped subplot PDFs the same size under bbox_inches="tight".
+        # A transparent label still contributes to the bounding box without showing.
+        ax.set_ylabel(
+            ylabel,
+            fontsize=pu.AXIS_LABEL_FONT_SIZE,
+            labelpad=10,
+            color=(0, 0, 0, 0),
+        )
     ax.set_xticks([])
     if filter_order:
         if has_bg:
