@@ -9,6 +9,8 @@ cuSBF is a high-performance GPU implementation of the [Super Bloom filter](https
 
 It exploits the streaming nature of sequence-derived k-mers by using **minimizers** to group consecutive k-mers sharing the same minimiser into super-k-mers, assigning all k-mers of a super-k-mer to the same 256-bit memory shard. This amortizes random memory accesses across consecutive k-mer queries, reducing memory-bandwidth pressure. The **findere** scheme further reduces false positives dramatically by inserting overlapping s-mers and requiring a full run of consecutive s-mer matches.
 
+This library is the companion code for the paper **"cuSBF: A Minimizer-Aware Bloom Filter for Genomic Sequence Data on Modern GPUs"**.
+
 ## Features
 
 - CUDA-accelerated batch k-mer insert and query from sequences
