@@ -62,7 +62,6 @@ Compared against:
 | 85.7       | 0.091%       | 0.107%       | 0.210%       | 0.126%  |
 | 342.6      | 0.0095%      | 0.0114%      | 0.0264%      | 0.0273% |
 
-
 ## Requirements
 
 - Linux (x86_64 or aarch64) with an NVIDIA GPU and driver
