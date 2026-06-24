@@ -1,6 +1,7 @@
 # cuSBF
 
 [![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://tdortman.github.io/cuSBF/)
+[![arXiv](https://img.shields.io/badge/arXiv-2606.24417-b31b1b.svg)](https://arxiv.org/abs/2606.24417)
 
 ## Overview
 
