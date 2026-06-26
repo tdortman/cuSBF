@@ -40,7 +40,7 @@ using CucoBloomPolicy = cuco::parametric_filter_policy<
     1,                          // add: fully horizontal (Θ=4, Φ=1)
     1,                          // contains: fully vertical (Θ=1, Φ=4)
     4,                          // contains: fully vertical (Θ=1, Φ=4)
-    false,                      // conditional_add
+    true,                       // conditional_add (we target 95% LF)
     false>;                     // early_exit_contains
 
 using CucoBloom = cuco::
