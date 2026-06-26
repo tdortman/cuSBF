@@ -179,13 +179,16 @@ static void prepareFastxData() {
         std::exit(1);
     }
 
-    data->host_insert = std::move(prepared.host_sequence);
     data->num_records = effectiveNumRecords();
     data->insert_kmers = prepared.kmers;
     data->fpr_query_kmers = g_fpr_query_kmers;
     data->query_chunk_kmers = g_fpr_query_chunk_kmers;
 
+    // upload_sequence copies prepared.host_sequence -> prepared.d_sequence, so it must run
+    // before the host buffer is moved out of `prepared` (otherwise the device buffer ends
+    // up empty while encode_packed_kmers is still launched against host_insert.size()).
     benchmark_common::fastx_workload::upload_sequence(prepared);
+    data->host_insert = std::move(prepared.host_sequence);
     data->d_insert = std::move(prepared.d_sequence);
     data->d_insert_packed.resize(data->insert_kmers);
     if (data->insert_kmers != 0) {
