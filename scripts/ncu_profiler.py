@@ -20,7 +20,7 @@ KERNEL_PATTERNS = {
     },
     "cucobloom": {
         "insert": ["add"],
-        "query": ["contains_if_n"],
+        "query": ["contains"],
     },
     "cuckoogpu": {
         "insert": ["insertKernel"],
