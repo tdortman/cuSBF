@@ -18,7 +18,22 @@
 
 using CuSbfConfig = cusbf::Config<31, 28, 16, 4>;
 using CuSbfFilter = cusbf::filter<CuSbfConfig>;
-using CucoBloom = cuco::bloom_filter<uint64_t>;
+
+using CucoBloomPolicy = cuco::parametric_filter_policy<
+    cuco::xxhash_64<uint64_t>,  // 64-bit hash (paper default)
+    uint64_t,                   // word type, S=64
+    4,                          // words per block (B=256 / S=64)
+    4,                          // pattern bits, k=4
+    4,                          // add: fully horizontal (Θ=4, Φ=1)
+    1,                          // add: fully horizontal (Θ=4, Φ=1)
+    1,                          // contains: fully vertical (Θ=1, Φ=4)
+    4,                          // contains: fully vertical (Θ=1, Φ=4)
+    false,                      // conditional_add
+    false>;                     // early_exit_contains
+
+using CucoBloom = cuco::
+    bloom_filter<uint64_t, cuco::extent<std::size_t>, cuda::thread_scope_device, CucoBloomPolicy>;
+
 using CuckooGpuConfig = cuckoogpu::Config<uint64_t, 16, 500, 256, 16>;
 using CuckooGpuFilter = cuckoogpu::Filter<CuckooGpuConfig>;
 
