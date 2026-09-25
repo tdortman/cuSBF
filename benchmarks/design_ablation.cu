@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <thrust/count.h>
 #include <thrust/device_vector.h>
+#include <thrust/iterator/counting_iterator.h>
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/std/bit>
 
@@ -420,20 +421,29 @@ class DesignAblationFixture : public bm::Fixture {
     using bm::Fixture::TearDown;
 
    public:
-    void SetUp(const bm::State& state) override {
-        num_symbols = static_cast<uint64_t>(state.range(0));
-        num_kmers = num_symbols - AblationConfig::k + 1;
+    void SetUp(bm::State& state) override {
+        benchmark_common::prepareFastxInsertWorkload<AblationConfig::k>(
+            cusbf::DnaAlphabet::separator, benchmark_common::FastxGpuPrepareKind::SequenceOnDevice
+        );
+        const auto& workload = *benchmark_common::g_fastxInsertWorkload;
+        sequence = &workload.d_insert_sequence;
+        num_symbols = sequence->size();
+        num_kmers = workload.insert_kmers;
+        if (num_kmers == 0) {
+            state.SkipWithError("FASTX input must contain at least 31 symbols");
+            return;
+        }
         const uint64_t filter_bits =
             cuda::std::bit_ceil(num_kmers * benchmark_common::g_fastxBitsPerItem);
         shards.resize(filter_bits / AblationConfig::filterBlockBits);
-        sequence.resize(num_symbols);
         output.resize(num_kmers);
-        benchmark_common::gpuGenerateDna(sequence, num_symbols);
+        state.SetLabel(
+            std::filesystem::path(benchmark_common::g_insertFastxPath).filename().string()
+        );
         clear();
     }
 
     void TearDown(const bm::State&) override {
-        thrust::device_vector<char>{}.swap(sequence);
         thrust::device_vector<AblationBlock>{}.swap(shards);
         thrust::device_vector<uint8_t>{}.swap(output);
     }
@@ -447,11 +457,25 @@ class DesignAblationFixture : public bm::Fixture {
     template <typename Policy>
     bool validate() {
         clear();
-        launch_insert<Policy>(sequence, num_kmers, shards);
-        launch_query<Policy>(sequence, num_kmers, shards, output);
+        launch_insert<Policy>(*sequence, num_kmers, shards);
+        launch_query<Policy>(*sequence, num_kmers, shards, output);
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
-        return static_cast<uint64_t>(thrust::count(output.begin(), output.end(), uint8_t{1})) ==
-               num_kmers;
+        const auto* symbols = thrust::raw_pointer_cast(sequence->data());
+        const auto* hits = thrust::raw_pointer_cast(output.data());
+        const auto begin = thrust::make_counting_iterator(uint64_t{0});
+        return thrust::count_if(
+                   thrust::device,
+                   begin,
+                   begin + num_kmers,
+                   [symbols, hits] __device__(uint64_t index) {
+                       bool valid = true;
+                       for (uint64_t offset = 0; offset < AblationConfig::k; ++offset) {
+                           valid &= AblationConfig::Alphabet::encode(symbols + index + offset) !=
+                                    AblationConfig::Alphabet::invalidSymbol;
+                       }
+                       return hits[index] != static_cast<uint8_t>(valid);
+                   }
+               ) == 0;
     }
 
     void counters(bm::State& state) const {
@@ -463,7 +487,7 @@ class DesignAblationFixture : public bm::Fixture {
 
     uint64_t num_symbols{};
     uint64_t num_kmers{};
-    thrust::device_vector<char> sequence;
+    const thrust::device_vector<char>* sequence{};
     thrust::device_vector<AblationBlock> shards;
     thrust::device_vector<uint8_t> output;
     benchmark_common::GPUTimer timer;
@@ -471,6 +495,9 @@ class DesignAblationFixture : public bm::Fixture {
 
 template <typename Policy>
 void run_insert(DesignAblationFixture& fixture, bm::State& state) {
+    if (state.skipped()) {
+        return;
+    }
     if (!fixture.validate<Policy>()) {
         state.SkipWithError("ablation insert/query self-check failed");
         return;
@@ -479,7 +506,7 @@ void run_insert(DesignAblationFixture& fixture, bm::State& state) {
         fixture.clear();
         CUSBF_CUDA_CALL(cudaDeviceSynchronize());
         fixture.timer.start();
-        launch_insert<Policy>(fixture.sequence, fixture.num_kmers, fixture.shards);
+        launch_insert<Policy>(*fixture.sequence, fixture.num_kmers, fixture.shards);
         state.SetIterationTime(fixture.timer.elapsed());
     }
     fixture.counters(state);
@@ -487,13 +514,16 @@ void run_insert(DesignAblationFixture& fixture, bm::State& state) {
 
 template <typename Policy>
 void run_query(DesignAblationFixture& fixture, bm::State& state) {
+    if (state.skipped()) {
+        return;
+    }
     if (!fixture.validate<Policy>()) {
         state.SkipWithError("ablation insert/query self-check failed");
         return;
     }
     for (auto _ : state) {
         fixture.timer.start();
-        launch_query<Policy>(fixture.sequence, fixture.num_kmers, fixture.shards, fixture.output);
+        launch_query<Policy>(*fixture.sequence, fixture.num_kmers, fixture.shards, fixture.output);
         state.SetIterationTime(fixture.timer.elapsed());
         bm::DoNotOptimize(thrust::raw_pointer_cast(fixture.output.data()));
     }
@@ -521,8 +551,6 @@ DEFINE_ABLATION(FullQuery, FullQueryPolicy, query)
 
 #define REGISTER_ABLATION(Name)                       \
     BENCHMARK_REGISTER_F(DesignAblationFixture, Name) \
-        ->Arg(1ULL << 22)                             \
-        ->Arg(1ULL << 28)                             \
         ->Unit(bm::kMillisecond)                      \
         ->UseManualTime()                             \
         ->Iterations(10)                              \
@@ -547,4 +575,16 @@ REGISTER_ABLATION(FullQuery);
 
 }  // namespace
 
-STANDARD_BENCHMARK_MAIN()
+int main(int argc, char** argv) {
+    auto cli = benchmark_common::parseFastxBenchmarkCli(argc, argv);
+    int benchmark_argc = static_cast<int>(cli.benchmark_argv.size());
+    bm::Initialize(&benchmark_argc, cli.benchmark_argv.data());
+    if (bm::ReportUnrecognizedArguments(benchmark_argc, cli.benchmark_argv.data())) {
+        return 1;
+    }
+    bm::RunSpecifiedBenchmarks();
+    bm::Shutdown();
+    benchmark_common::clearFastxInsertWorkload();
+    fflush(stdout);
+    std::_Exit(0);
+}

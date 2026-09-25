@@ -57,7 +57,6 @@ _BENCHMARK_TO_OPERATION = {
     for operation, variants in _VARIANTS.items()
     for benchmark in variants.values()
 }
-_TARGET_SIZES = (1 << 22, 1 << 28)
 
 
 def load_benchmark_csv(csv_path: Path) -> pd.DataFrame:
@@ -81,24 +80,27 @@ def load_benchmark_csv(csv_path: Path) -> pd.DataFrame:
     return pd.read_csv(data, usecols=list(header.columns))
 
 
-def parse_benchmark_row(name: str) -> tuple[str, str, int] | None:
-    """Parse an ablation benchmark name into operation, variant, and size."""
+def parse_benchmark_row(name: str) -> tuple[str, str] | None:
+    """Parse a FASTX ablation benchmark name into operation and variant."""
     parts = str(name).strip().strip('"').split("/")
     if len(parts) < 3 or parts[0] != "DesignAblationFixture":
         return None
 
     benchmark = parts[1]
     operation = _BENCHMARK_TO_OPERATION.get(benchmark)
-    if operation is None or not parts[2].isdigit():
+    if operation is None:
         return None
-    return operation, benchmark, int(parts[2])
+    if parts[2].isdigit():
+        raise typer.BadParameter("Synthetic ablation CSV is not a FASTX workload")
+    return operation, benchmark
 
 
 def load_throughput_series(csv_path: Path) -> pd.DataFrame:
     """Load positive median items-per-second rows for the ablation fixture."""
     df = load_benchmark_csv(csv_path)
-    if "name" not in df or "items_per_second" not in df:
-        raise typer.BadParameter("CSV must contain name and items_per_second columns")
+    required = {"name", "items_per_second", "num_symbols", "memory_bytes", "label"}
+    if not required.issubset(df.columns):
+        raise typer.BadParameter(f"CSV must contain {', '.join(sorted(required))}")
 
     median_rows = df[df["name"].astype(str).str.endswith("_median", na=False)]
     rows: list[dict[str, object]] = []
@@ -106,38 +108,57 @@ def load_throughput_series(csv_path: Path) -> pd.DataFrame:
         parsed = parse_benchmark_row(row["name"])
         if parsed is None:
             continue
-        operation, benchmark, num_symbols = parsed
+        operation, benchmark = parsed
         throughput = pd.to_numeric(row["items_per_second"], errors="coerce")
-        if pd.isna(throughput) or float(throughput) <= 0:
-            continue
+        num_symbols = pd.to_numeric(row["num_symbols"], errors="coerce")
+        memory_bytes = pd.to_numeric(row["memory_bytes"], errors="coerce")
+        if any(
+            not math.isfinite(value) or value <= 0
+            for value in (throughput, num_symbols, memory_bytes)
+        ):
+            raise typer.BadParameter(
+                f"Invalid throughput or workload size for {benchmark}"
+            )
+        if pd.isna(row["label"]) or not str(row["label"]).strip():
+            raise typer.BadParameter(f"Missing FASTX workload label for {benchmark}")
         rows.append(
             {
                 "operation": operation,
                 "benchmark": benchmark,
                 "num_symbols": num_symbols,
+                "memory_bytes": memory_bytes,
+                "label": row["label"],
                 "throughput": float(throughput),
             }
         )
 
     if not rows:
         raise typer.BadParameter(f"No design-ablation median rows found in {csv_path}")
-    return pd.DataFrame(rows)
+    data = pd.DataFrame(rows)
+    if data["benchmark"].duplicated().any():
+        raise typer.BadParameter("Duplicate ablation median rows")
+    if any(
+        data[column].nunique() != 1
+        for column in ("num_symbols", "memory_bytes", "label")
+    ):
+        raise typer.BadParameter(
+            "All ablation variants must use the same FASTX workload and filter size"
+        )
+    return data
 
 
 def compute_shapley_contributions(
-    data: pd.DataFrame, operation: str, num_symbols: int
+    data: pd.DataFrame, operation: str
 ) -> tuple[float, list[float]]:
     """Split full speedup into order-independent component effects."""
     variants = _VARIANTS[operation]
-    point = data[
-        (data["operation"] == operation) & (data["num_symbols"] == num_symbols)
-    ].set_index("benchmark")["throughput"]
+    point = data[data["operation"] == operation].set_index("benchmark")["throughput"]
     missing = [
         benchmark for benchmark in variants.values() if benchmark not in point.index
     ]
     if missing:
         raise typer.BadParameter(
-            f"Missing {operation} subset rows at 2^{num_symbols.bit_length() - 1} symbols"
+            f"Missing {operation} subset rows: {', '.join(missing)}"
         )
 
     baseline = float(point.loc[variants[0]])
@@ -171,11 +192,10 @@ def compute_shapley_contributions(
 def plot_speedups(data: pd.DataFrame, output_pdf: Path) -> None:
     """Plot Shapley-attributed design contributions in one chart."""
     fig, ax = plt.subplots(figsize=(3.5, 3.0), layout="constrained")
-    positions = (0.0, 0.65, 1.65, 2.3)
+    positions = (0.0, 0.8)
     entries = [
-        (operation, size, compute_shapley_contributions(data, operation, size))
+        (operation, compute_shapley_contributions(data, operation))
         for operation in _COMPONENTS
-        for size in _TARGET_SIZES
     ]
     text_colors = ("white", "black", "white")
     legend_labels: set[str] = set()
@@ -183,9 +203,7 @@ def plot_speedups(data: pd.DataFrame, output_pdf: Path) -> None:
     y_min = 0.0
     y_max = 1.0
 
-    for position, (operation, _, (full_speedup, contributions)) in zip(
-        positions, entries
-    ):
+    for position, (operation, (full_speedup, contributions)) in zip(positions, entries):
         ax.bar(
             position,
             1.0,
@@ -268,10 +286,7 @@ def plot_speedups(data: pd.DataFrame, output_pdf: Path) -> None:
         y_min = min(y_min, negative_bottom, full_speedup)
         y_max = max(y_max, positive_bottom, full_speedup)
 
-    tick_labels = [
-        rf"\textbf{{{operation}}}" + "\n" + rf"$2^{{{size.bit_length() - 1}}}$"
-        for operation, size, _ in entries
-    ]
+    tick_labels = [rf"$\textbf{{{operation}}}$" for operation, _ in entries]
     ax.axhline(1.0, color="#333333", linewidth=pu.REFERENCE_LINE_WIDTH, zorder=2)
     ax.set_xticks(positions, tick_labels, fontsize=7)
     ax.set_ylabel(
@@ -293,8 +308,7 @@ def plot_speedups(data: pd.DataFrame, output_pdf: Path) -> None:
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
     bar_width = abs(
-        ax.transData.transform((0.25, 0))[0]
-        - ax.transData.transform((-0.25, 0))[0]
+        ax.transData.transform((0.25, 0))[0] - ax.transData.transform((-0.25, 0))[0]
     )
     for label, bottom, contribution in contribution_labels:
         bounds = label.get_window_extent(renderer)
