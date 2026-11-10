@@ -1,0 +1,86 @@
+name: GPU Simulator
+
+# Optional, non-required check. The hosted runners have no GPU, so the GoogleTest
+# suite is never run in the existing workflows (docs only). This builds it and
+# runs it on a simulated NVIDIA H100
+# (https://github.com/pantheongpu/pantheonsim). A simulator cannot reproduce
+# hardware-specific behavior or timing, so it complements real-GPU testing and
+# does not replace it.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "include/**"
+      - "tests/**"
+      - "subprojects/**"
+      - "meson.build"
+      - "meson.options"
+      - ".github/workflows/gpu-sim.yml"
+
+concurrency:
+  group: gpu-sim-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (CUDA 13.2 and simulated H100)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # The README asks for CUDA 13.1 or newer (include/ uses <cuda/stream>).
+      - name: Set up the simulated GPU and CUDA toolkit
+        uses: pantheongpu/setup-pantheonsim@ca87fe3143b29166822b923d6050945c5179408c # v0.1.5
+        with:
+          gpu: nvidia/h100
+          cuda-toolkit: "13.2"
+
+      - name: Install Meson
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install meson
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      # meson.build lists -gencode flags for SASS (sm_120, sm_90, sm_80), which
+      # the simulator does not run. Replace them with PTX only for compute_90.
+      - name: Target PTX for the simulated H100
+        run: |
+          sed -i "/^cuda_arch_args = \[/,/^\]/c\\cuda_arch_args = ['-arch=compute_90']" meson.build
+          git diff meson.build
+
+      # -cudart=shared: the simulator needs a shared CUDA runtime. CPATH lets
+      # the host compiler find CCCL for the .cpp tests that include cusbf headers.
+      - name: Configure
+        env:
+          CPATH: /usr/local/cuda-13.2/include/cccl:/usr/local/cuda-13.2/include
+        run: |
+          meson setup build \
+            -Dbenchmarks=disabled \
+            -Dexamples=disabled \
+            -Dtests=enabled \
+            -Dcuda_link_args=-cudart=shared
+
+      - name: Build
+        env:
+          CPATH: /usr/local/cuda-13.2/include/cccl:/usr/local/cuda-13.2/include
+        run: ninja -C build -j3 tests/test-cusbf tests/test-large-fastx
+
+      - name: Test
+        run: vgpu run ./build/tests/test-cusbf
+
+      # The test generates a FASTA file of CUSBF_LARGE_FASTX_MB mebibytes and
+      # processes it out of core. The upstream meson target uses 16 GiB, which
+      # is too much for a simulator, so this uses 32 MiB.
+      - name: Large FASTX test (32 MiB)
+        env:
+          CUSBF_LARGE_FASTX_MB: "32"
+        run: vgpu run ./build/tests/test-large-fastx
